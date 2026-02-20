@@ -35,13 +35,11 @@ Response:
 }
 ```
 
-Gemini has geographic training knowledge — given `43.6510, -79.3800` it knows this is downtown Toronto and weights candidates accordingly. It does not need an API call to interpret coordinates; this is built-in knowledge, sufficient for search disambiguation.
-
 ---
 
 ### POST /session/start
 
-Starts a session after the user picks a destination. Triggers auto-generation of waypoints via Directions API (primary approach). Falls back to hardcoded routes if not achieved.
+Starts a session after the user picks a destination. Triggers auto-generation of waypoints via Directions API.
 
 Request:
 ```json
@@ -51,7 +49,8 @@ Request:
   "destination_lat": 43.6534,
   "destination_lng": -79.3839,
   "user_lat": 43.6510,
-  "user_lng": -79.3800
+  "user_lng": -79.3800,
+  "tier": "premium"
 }
 ```
 
@@ -60,28 +59,17 @@ Response:
 {
   "session_id": "abc123",
   "destination_name": "Nathan Phillips Square",
-  "waypoints": [
-    {
-      "id": "wp1",
-      "name": "Bay and Queen intersection",
-      "lat": 43.6530,
-      "lng": -79.3810,
-      "trigger_radius_meters": 15,
-      "audio_file": "chime_ambient.mp3",
-      "landmark_hint": "Pedestrian crossing, traffic sounds on both sides"
-    }
-  ],
-  "current_waypoint_index": 0
+  "waypoints": [...],
+  "current_waypoint_index": 0,
+  "tier": "premium"
 }
 ```
-
-Backend calls `directions_service.generate_waypoints()` using the user's start position and the resolved destination coordinates. Each Directions API step becomes a waypoint with the step's instruction text as `landmark_hint`. Gemini's narration calls then rephrase these in sensory/accessibility language before they're spoken.
 
 ---
 
 ### POST /session/describe
 
-Generates the accessible route overview once per session, before the user starts walking.
+Generates the accessible route overview once per session, before walking.
 
 Request:
 ```json
@@ -91,10 +79,9 @@ Request:
 Response:
 ```json
 {
-  "description": "You're heading northeast toward Nathan Phillips Square, about 8 minutes on foot. Your first landmark is a pedestrian crossing where you'll hear traffic on both sides — bear right there. You'll then pass a raised plaza; keep it on your left. Your destination has a wide ramp entrance facing the street.",
+  "description": "You're heading northeast toward Nathan Phillips Square...",
   "waypoint_summary": [
-    { "index": 1, "name": "Bay and Queen intersection", "hint": "pedestrian crossing, traffic both sides" },
-    { "index": 2, "name": "Nathan Phillips Square entrance", "hint": "wide ramp facing the street" }
+    { "index": 1, "name": "Bay and Queen intersection", "hint": "pedestrian crossing, traffic both sides" }
   ]
 }
 ```
@@ -110,9 +97,10 @@ Request:
 {
   "session_id": "abc123",
   "destination_name": "Nathan Phillips Square",
-  "waypoints": [ ... ],
+  "waypoints": [...],
   "current_waypoint_index": 1,
-  "completed_waypoint_ids": ["wp1"]
+  "completed_waypoint_ids": ["wp1"],
+  "tier": "premium"
 }
 ```
 
@@ -144,17 +132,13 @@ Response:
   "distance_meters": 62.3,
   "bearing_degrees": 34.7,
   "triggered": false,
-  "narration": "Keep walking — listen for the pedestrian crossing signal ahead of you.",
+  "narration": "Keep walking — listen for the pedestrian crossing signal ahead.",
   "next_waypoint": { ... },
   "game_complete": false
 }
 ```
 
-`narration` is only non-null when the user's distance band changed since the last update. When unchanged, `narration` is null and the frontend reuses the previous narration display without re-speaking. This limits Gemini narration calls to 4–5 per waypoint segment.
-
-`bearing_degrees` is used by the frontend to position the HRTF audio source in 3D space. `distance_meters` feeds into the position calculation (farther = panner further from listener = quieter).
-
-If `triggered`: frontend plays arrival chime, shows clue card, calls `/session/next`.
+`narration` is only non-null when the distance band changed.
 
 ---
 
@@ -177,16 +161,6 @@ Response:
 }
 ```
 
-Final waypoint:
-```json
-{
-  "next_waypoint": null,
-  "waypoints_remaining": 0,
-  "narration": "You've arrived at Nathan Phillips Square.",
-  "game_complete": true
-}
-```
-
 ---
 
 ### GET /session/{session_id}
@@ -195,64 +169,85 @@ Current session state. For debugging and resume verification.
 
 ---
 
-## AI Assistant
+## AI Assistant (REST — Basic/Standard tier fallback)
 
 ### POST /assistant/message
 
-In-session assistant. Gemini has full route context and can call two tools:
-
-- `request_camera` — when it needs to see the user's physical surroundings
-- `get_map_image` — when it needs a map view of the user's position to answer a spatial question. Handled entirely backend-side: the backend fetches a Google Static Maps tile at the user's coordinates and sends it to Gemini as a second image input. The frontend just sends the original message and gets a text reply back.
+Text-based assistant with optional image. Used by Basic and Standard tiers, or as fallback when WebSocket is unavailable.
 
 Request (text only):
 ```json
 {
   "session_id": "abc123",
-  "message": "I think I'm at the wrong corner, nothing feels right",
+  "message": "I think I'm at the wrong corner",
   "image_base64": null
-}
-```
-
-Request (with camera photo — sent after `needs_camera: true` response):
-```json
-{
-  "session_id": "abc123",
-  "message": "Does this look right?",
-  "image_base64": "/9j/4AAQ..."
 }
 ```
 
 Response (direct):
 ```json
 {
-  "reply": "You should be at the Bay and Queen intersection. The pedestrian crossing signal should be audible — if you're at the right spot, traffic sounds will be on both sides of you. If there's a construction barrier, the next accessible crossing is north on Bay Street.",
-  "needs_camera": false
+  "reply": "You should be at the Bay and Queen intersection...",
+  "needs_camera": false,
+  "moderation": null
 }
 ```
 
-Response (Gemini called `request_camera`):
+Response (model wants camera):
 ```json
 {
   "reply": null,
-  "needs_camera": true
+  "needs_camera": true,
+  "moderation": null
 }
 ```
 
-Response after `get_map_image` (handled backend-side, transparent to frontend):
+Response (with moderation warning):
 ```json
 {
-  "reply": "Looking at your position on the map, you're about 30 metres east of where you need to be. The crossing you want is directly to your west — turn around and walk until you hear the signal.",
-  "needs_camera": false
+  "reply": "...",
+  "needs_camera": false,
+  "moderation": {
+    "warning": "Content flagged. Strike 1 of 3.",
+    "camera_disabled": false,
+    "strikes": 1
+  }
 }
 ```
 
 ---
 
+## Live Session (WebSocket — Premium tier)
+
+### WS /live/session
+
+Real-time bidirectional communication for voice-to-voice + live video.
+
+**Connection:** `ws://localhost:8000/live/session?session_id=abc123`
+
+**Client → Server:**
+| Type | Payload | Description |
+|---|---|---|
+| `audio` | `{data: base64}` | PCM audio chunk from user's microphone |
+| `video_frame` | `{data: base64}` | JPEG frame from camera |
+| `camera_on` | `{}` | User enabled camera |
+| `camera_off` | `{}` | User disabled camera |
+| `text` | `{message: str}` | Text input fallback |
+| `location_update` | `{lat, lng}` | GPS position update |
+
+**Server → Client:**
+| Type | Payload | Description |
+|---|---|---|
+| `audio` | `{data: base64}` | AI voice response audio chunk |
+| `transcript` | `{text, role}` | Transcription of speech (user or assistant) |
+| `tool_call` | `{name, status}` | Tool execution notification |
+| `moderation_warning` | `{message, strikes}` | Content moderation alert |
+| `error` | `{message, code}` | Error notification |
+| `connection_status` | `{status}` | Connection state updates |
+
+---
+
 ## Utility
-
-### GET /waypoints
-
-All waypoints in the current demo dataset. Useful for debugging.
 
 ### GET /
 
@@ -266,11 +261,11 @@ Health check — `{ "status": "ok" }`.
 { "detail": "Session not found" }
 ```
 
-Status codes: 200, 404, 413 (image too large), 422 (bad request, auto), 503 (Gemini or Google API unavailable).
+Status codes: 200, 404, 413 (image too large), 422 (bad request), 429 (rate limited), 503 (upstream API unavailable).
 
 ---
 
-## Gemini Call Budget
+## Token Budget
 
 | Call | When | Estimated total |
 |---|---|---|
@@ -278,7 +273,9 @@ Status codes: 200, 404, 413 (image too large), 422 (bad request, auto), 503 (Gem
 | `generate_route_description` | Session start | 1 per session |
 | `generate_narration` | Distance band changes | ~4–5 per waypoint |
 | `session/next` transition | Each waypoint | 1 per waypoint |
-| `respond_to_assistant` | Each user message | User-initiated |
-| Map image fetched internally | If model calls `get_map_image` | 0 cost for Gemini, 1 Static Maps API call |
+| `respond_to_assistant` (REST) | Each text message | User-initiated |
+| Live API session | Entire navigation | 1 session per route |
+| Map image via tool call | When model decides | 0 Gemini cost, 1 Static Maps call |
+| Places via tool call | When model decides | 1 Places API call |
 
-A 3-waypoint session with 3 assistant exchanges: roughly 20–28 Gemini calls. Well within free tier for a demo.
+A 3-waypoint session with voice-to-voice and 2 camera activations: roughly 20–30 REST calls + 1 Live session of ~5–10 min. Well within free tier (1,500 req/day) for a hackathon demo.

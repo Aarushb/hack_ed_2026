@@ -1,6 +1,6 @@
 # Backend Design Document
 
-FastAPI (Python). Read `design-overview.md` first. This document covers folder structure, data models, service logic, and pseudocode for every meaningful backend operation.
+FastAPI (Python). Read `design-overview.md` first. This document covers folder structure, data models, service logic, and implementation details for every backend operation — including the new voice-to-voice, live video, function calling, and moderation systems.
 
 ---
 
@@ -8,9 +8,12 @@ FastAPI (Python). Read `design-overview.md` first. This document covers folder s
 
 - Geo math: given two coordinates, return distance in metres and bearing in degrees
 - Session management: create and track user sessions and waypoint progression in memory
-- AI orchestration: call Gemini for destination search, route narration, assistant responses, and camera-based visual grounding
+- AI orchestration (REST): call Gemini for destination search, route narration, text-based assistant
+- AI orchestration (Live): proxy Gemini Multimodal Live API for voice-to-voice + live video
+- Function calling: expose backend tools (places, directions, map, location) to the AI model
 - Places resolution: call Google Places API to turn NLP-matched place names into real coordinates
-- Waypoint generation: call Google Directions API walking steps and map them to Waypoint objects (primary approach; hardcoded routes are the fallback if this isn't achieved)
+- Waypoint generation: call Google Directions API walking steps and map them to Waypoint objects
+- Content moderation: jailbreak detection, camera content filtering, strike system
 - Serve static audio files for waypoint cues
 
 ---
@@ -19,34 +22,35 @@ FastAPI (Python). Read `design-overview.md` first. This document covers folder s
 
 ```
 backend/
-├── main.py                  ← App entry, CORS, router registration
+├── main.py                    ← App entry, CORS, router registration, lifespan
 ├── routers/
-│   ├── search.py            ← NLP destination search + place resolution
-│   ├── session.py           ← Session start, update, next, describe, resume
-│   └── assistant.py         ← In-session AI assistant (text + image)
+│   ├── search.py              ← NLP destination search + place resolution
+│   ├── session.py             ← Session start, update, next, describe, resume
+│   ├── assistant.py           ← REST text/image assistant (Basic tier fallback)
+│   └── live.py                ← WebSocket endpoint for Gemini Live API proxy
 ├── services/
-│   ├── geo_service.py       ← Distance and bearing math (geopy)
-│   ├── session_service.py   ← In-memory session store, session logic
-│   ├── gemini_service.py    ← All Gemini API calls (text + multimodal)
-│   ├── places_service.py    ← Google Places API calls (resolve to coords)
-│   └── directions_service.py ← Google Directions API (auto-generate waypoints)
+│   ├── geo_service.py         ← Distance and bearing math (geopy)
+│   ├── session_service.py     ← In-memory session store, session logic
+│   ├── gemini_service.py      ← All REST Gemini API calls (text + multimodal)
+│   ├── live_service.py        ← Gemini Multimodal Live API session management
+│   ├── places_service.py      ← Google Places API calls (resolve to coords)
+│   ├── directions_service.py  ← Google Directions API (auto-generate waypoints)
+│   └── moderation_service.py  ← Content safety, jailbreak detection, strike tracking
 ├── models/
-│   └── schemas.py           ← All Pydantic request/response models
+│   └── schemas.py             ← All Pydantic request/response models
 ├── utils/
-│   └── helpers.py           ← Shared utilities
+│   └── helpers.py             ← Shared utilities (HTML stripping, image compression, etc.)
 └── static/
-    └── audio/               ← MP3/OGG waypoint audio cues served as static files
+    └── audio/                 ← MP3/OGG waypoint audio cues served as static files
 ```
 
 ---
 
-## Model Choice: Gemini 3 Flash
+## Model Choice
 
-Model string: `gemini-3-flash-preview`
+**REST calls**: `gemini-2.0-flash` — structured output, function calling, multimodal image input, 1M token context.
 
-Supports: structured output via JSON schema, function calling with strict schema validation, multimodal image input (base64), 1M token context, dynamic thinking (adjusts reasoning depth to task complexity automatically).
-
-Prompts are written to be concise and direct — Gemini 3 responds better to clear instructions than to elaborate prompt engineering. Trust the model to reason; give it the data it needs.
+**Live sessions**: `gemini-2.0-flash` via Multimodal Live API — bidirectional audio streaming, real-time video input, function calling, low latency.
 
 ---
 
@@ -75,6 +79,18 @@ started_at: datetime
 last_user_lat: float
 last_user_lng: float
 last_distance_band: str        ← "far" / "approaching" / "near" / "arrived"
+conversation_history: list[dict]
+moderation_state: ModerationState
+tier: str                      ← "basic" / "standard" / "premium"
+```
+
+**ModerationState**
+```
+warnings: int                  ← 0–3
+camera_disabled: bool
+jailbreak_strikes: int         ← 0–3
+restricted: bool
+flagged_messages: list[str]
 ```
 
 **PlaceCandidate**
@@ -92,9 +108,17 @@ confidence: float
 distance_meters: float
 bearing_degrees: float
 triggered: bool
-narration: str | None          ← only non-null when distance band changed
+narration: str | None
 next_waypoint: Waypoint | None
 game_complete: bool
+```
+
+**LiveSessionConfig**
+```
+session_id: str
+tier: str
+system_prompt: str
+tools: list[dict]
 ```
 
 ---
@@ -104,12 +128,12 @@ game_complete: bool
 ### geo_service.py
 
 **Distance:**
-```
+```python
 distance = geodesic((user_lat, user_lng), (wp_lat, wp_lng)).meters
 ```
 
 **Bearing** (compass direction from user to waypoint, 0–360):
-```
+```python
 delta_lng = radians(wp_lng - user_lng)
 lat1, lat2 = radians(user_lat), radians(wp_lat)
 x = sin(delta_lng) * cos(lat2)
@@ -118,7 +142,7 @@ bearing = (degrees(atan2(x, y)) + 360) % 360
 ```
 
 **Distance band** (throttles Gemini narration calls):
-```
+```python
 def get_distance_band(meters):
     if meters > 100: return "far"
     if meters > 50:  return "approaching"
@@ -128,198 +152,159 @@ def get_distance_band(meters):
 
 ### directions_service.py
 
-**Goal: auto-generate waypoints from a real walking route.** This is the primary approach. If it isn't completed by the hackathon deadline, fall back to hardcoded routes.
-
 Flow:
-1. Call Google Directions API: `gmaps.directions(origin=(user_lat, user_lng), destination=(dest_lat, dest_lng), mode="walking")`
-2. The API returns a list of steps, each with an HTML instruction string and an end location (lat, lng)
-3. Strip HTML tags from each step instruction to get a plain-text description
-4. Map each step to a Waypoint object — the step instruction becomes the `landmark_hint`
-5. Assign a default `audio_file`, a `trigger_radius_meters` of 15, and generate a short `id`
-6. Return the waypoint list
+1. Call Google Directions API: `origin=(user_lat, user_lng), destination=(dest_lat, dest_lng), mode="walking"`
+2. Parse steps from `result[0]["legs"][0]["steps"]`
+3. Strip HTML from `html_instructions` → plain text `landmark_hint`
+4. Map each step to a Waypoint using `end_location` lat/lng
+5. Return waypoint list
 
-The landmark hints from Directions API steps will be distance/direction based ("Turn left onto Bay St") rather than sensory/landmark based. That's acceptable as the raw data — the `generate_narration` call then takes that hint and rephrases it in accessible sensory language before it's spoken to the user.
-
-Fallback if Directions API is not integrated in time: hardcode demo routes in `session_service.py` as a dict keyed by `place_id`. Each entry has a hand-written waypoint list with well-crafted `landmark_hint` strings.
+Fallback: hardcoded demo routes in `session_service.py` keyed by `place_id`.
 
 ### session_service.py
 
 Sessions stored in `sessions: dict[str, Session] = {}`.
 
-**create_session(destination_name, waypoints)** — generate UUID, build Session, store, return.
+**create_session(destination_name, waypoints, tier)** — generate UUID, build Session with ModerationState, store, return.
 
-**process_location_update(session_id, lat, lng)**
-- Look up session
-- Call geo_service for distance and bearing to current target waypoint
-- Get new distance band
-- If band changed: call `gemini_service.generate_narration()`, update stored band
-- If band unchanged: return `narration = None`
-- Check trigger (distance < trigger_radius)
-- If triggered: mark complete, increment index, reset band to "far"
-- Return UpdateResponse
+**process_location_update(session_id, lat, lng)** — geo math, distance band check, narration trigger, waypoint trigger.
 
 **advance_to_next(session_id)** — increment index; if past end, game complete.
 
-### gemini_service.py
+**get_session(session_id)** — retrieve session or raise 404.
 
-All Gemini calls. Model: `gemini-3-flash-preview`. Uses the `google-generativeai` Python SDK.
+**update_conversation_history(session_id, role, content)** — append to conversation log.
 
----
+### gemini_service.py (REST calls)
 
-**search_destinations(query, user_lat, user_lng) → list[PlaceCandidate]**
+All non-live Gemini calls. Model: `gemini-2.0-flash`.
 
-Uses structured output to guarantee clean JSON — no parsing guesswork.
+- `search_destinations(query, user_lat, user_lng)` → structured output → `list[PlaceCandidate]`
+- `generate_route_description(waypoints, destination_name)` → accessibility narration
+- `generate_narration(current_wp, distance_band)` → one-sentence TTS guidance
+- `respond_to_assistant(session, message, image_base64)` → text assistant with function calling
 
-Pydantic schema:
+### live_service.py (NEW — Gemini Multimodal Live API)
+
+Manages real-time voice + video sessions. This is the core of the Premium tier experience.
+
+**Session lifecycle:**
+1. Frontend opens WebSocket to `/live/session`
+2. Backend creates a Gemini Live API session with system prompt, tools, and voice config
+3. Frontend streams audio (user's voice) → backend → Gemini Live
+4. Gemini responds with audio (AI voice) → backend → frontend
+5. When camera enabled: frontend streams video frames → backend → Gemini Live
+6. When model calls a tool: backend executes it, returns result to Gemini, gets response
+7. On disconnect: cleanup session, preserve state for reconnection
+
+**System prompt** (crafted for safety and focus):
+```
+You are NorthStar, a navigation assistant for people with visual impairments.
+You guide users along walking routes using landmarks, sounds, textures, and
+spatial cues — never distances in metres or cardinal directions.
+
+CRITICAL RULES:
+1. NEVER hallucinate. If you are unsure about the user's surroundings, ask them
+   to turn on the camera so you can see. User safety depends on your accuracy.
+2. Do NOT turn on the camera for everything. Only request it when visual context
+   would meaningfully help — obstacles, confusing intersections, verifying landmarks.
+3. Be focused and solution-oriented. Brief empathy is fine ("I understand, let me
+   help") but don't over-validate. Get to the solution.
+4. Reference conversation history naturally. "I see you're headed to..." not
+   "Based on our previous exchange..."
+5. If neither the camera nor your knowledge can help (truly dynamic real-world
+   conditions), say so honestly and advise asking someone nearby or calling for
+   assistance.
+
+CURRENT ROUTE CONTEXT:
+{route_context}
+
+You have access to these tools — use them when the data you have isn't sufficient:
+- get_map_image: Get a map view of the user's position for spatial reasoning
+- search_places: Find nearby places if the user asks about something not in your context
+- get_directions: Recalculate or check an alternate route
+- get_current_location: Get the user's latest GPS coordinates from the session
+```
+
+**Tool declarations** (registered with Live API session):
 ```python
-class PlaceMatch(BaseModel):
-    name: str
-    address: str
-    search_query: str   # clean name for Places API
-    confidence: float
-
-class SearchResult(BaseModel):
-    matches: list[PlaceMatch]
+tools = [
+    {
+        "name": "get_map_image",
+        "description": "Fetch a map image of the user's current GPS position to understand their spatial location relative to the route.",
+        "parameters": {"type": "object", "properties": {}, "required": []}
+    },
+    {
+        "name": "search_places",
+        "description": "Search for a place near the user's location. Use when the user asks about something not in the current route context.",
+        "parameters": {
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "What to search for"}},
+            "required": ["query"]
+        }
+    },
+    {
+        "name": "get_directions",
+        "description": "Get walking directions between two points. Use to recalculate or verify a route segment.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "origin_lat": {"type": "number"},
+                "origin_lng": {"type": "number"},
+                "dest_lat": {"type": "number"},
+                "dest_lng": {"type": "number"}
+            },
+            "required": ["origin_lat", "origin_lng", "dest_lat", "dest_lng"]
+        }
+    },
+    {
+        "name": "get_current_location",
+        "description": "Get the user's latest GPS coordinates and distance/bearing to their current waypoint target.",
+        "parameters": {"type": "object", "properties": {}, "required": []}
+    }
+]
 ```
 
-Prompt:
-```
-You are a location search assistant. The user is at coordinates ({user_lat}, {user_lng}).
+**Function call handling:**
+When the model issues a function call during a live session, the backend:
+1. Parses the function name and arguments
+2. Executes the corresponding backend service call
+3. Returns the result as a tool response to the Live API
+4. The model incorporates the result and continues its spoken response
 
-Return up to 3 place matches for their query, ranked by relevance and proximity.
-Use your geographic knowledge to interpret the coordinates — you know where these
-coordinates are in the world and can weight results accordingly.
+This is seamless — the user hears a brief pause while the tool executes, then the AI continues talking with the new information.
 
-Query: "{query}"
-```
+### moderation_service.py (NEW)
 
-Note on what the model knows: Gemini has strong geographic training data. Given coordinates like `43.6530, -79.3810`, it knows this is in downtown Toronto near Bay and Queen. It does not need to make an external API call to interpret coordinates — this is knowledge it already has, and it's sufficient for weighting search candidates geographically. For example, "the big park with the fountain" at those coordinates would correctly rank Nathan Phillips Square over a park in another city.
+**check_content(session_id, content_type, content)** — analyses text or image content.
+- `content_type`: "text", "image", "video_frame"
+- Returns: `{"safe": bool, "reason": str | None, "severity": "none" | "low" | "high"}`
 
-The resulting `search_query` strings are each sent to `places_service.search_place()` to get real GPS coordinates. Results are merged and returned as `PlaceCandidate` objects.
+**check_jailbreak(session_id, message, conversation_history)** — pattern detection.
+- Looks for: role-play manipulation, instruction override attempts, "ignore previous" patterns
+- Severity: "none", "suspicious", "confirmed"
+- On "confirmed": increment strike counter
 
----
+**process_violation(session_id, violation_type, severity)**
+- Tracks warnings per session
+- `severity == "low"` (accidental): gentle notification, no strike
+- `severity == "high"` (deliberate): strike + warning
+- At 3 strikes: disable camera / restrict session
 
-**generate_route_description(waypoints, destination_name) → str**
-
-Called once at session start.
-
-Prompt:
-```
-You are an accessibility navigation assistant. Write a 3–5 sentence spoken route
-summary for a person with visual impairment. Focus on landmarks, textures, sounds,
-and physical sensations — not distances or compass directions. This will be read
-aloud before they start walking.
-
-Destination: {destination_name}
-Waypoints: {name and landmark_hint for each}
-```
-
----
-
-**generate_narration(current_wp, distance_band) → str**
-
-One sentence for TTS. Called only when distance band changes.
-
-Prompt:
-```
-Guide a visually impaired person to: "{current_wp.name}".
-Landmark context: "{current_wp.landmark_hint}".
-Current proximity: {distance_band}.
-
-One sentence. Landmark and sensory cues only. No distances in metres.
-No cardinal directions. Under 20 words. If "arrived": confirm arrival.
-```
-
----
-
-**respond_to_assistant(session, message, image_base64) → dict**
-
-The most context-rich call. Uses **two function tools**: `request_camera` and `get_map_image`.
-
-**Why two tools:**
-
-`request_camera` — the model calls this when it needs to see the user's physical surroundings (obstacles, construction, ambiguous environment). The frontend opens the camera and resends with the photo.
-
-`get_map_image` — the model calls this when it needs a map view of the user's current GPS location to understand their spatial position relative to the route. The backend calls Google Static Maps API with the user's coordinates, gets a map tile image, and sends it back to Gemini as a second multimodal input alongside the original message. This is the correct answer to the question of whether coordinates alone are enough context: they usually are (Gemini knows where those coordinates are), but for complex positional questions the model can now request a map snapshot to verify.
-
-Function declarations:
-```python
-request_camera_fn = {
-    "name": "request_camera",
-    "description": "Request a photo from the user's camera to see their immediate physical surroundings — obstacles, construction, specific landmarks. Use when you need to see the user's environment to give accurate guidance.",
-    "parameters": {"type": "object", "properties": {}, "required": []}
-}
-
-get_map_image_fn = {
-    "name": "get_map_image",
-    "description": "Get a map image of the user's current GPS position to understand their location relative to the route and surrounding streets. Use when coordinates alone aren't sufficient to answer a positional question.",
-    "parameters": {"type": "object", "properties": {}, "required": []}
-}
-```
-
-System prompt (full context, sent with every assistant call):
-```
-You are the navigation assistant for Wayfind, an app that guides people with
-visual impairments using audio cues and voice narration. Users may be disoriented,
-anxious, or relying entirely on what you tell them. Accuracy matters.
-
-Current route:
-- Destination: {destination_name}
-- Full waypoints with landmark hints: {serialised list}
-- Last completed: {name or "none yet"}
-- Current target: {next_waypoint.name}
-  Landmark hint: {next_waypoint.landmark_hint}
-- User GPS: {lat}, {lng} (you have geographic knowledge of this location)
-- Proximity: {distance_band} (~{distance}m from target)
-
-Answer specifically and helpfully. If you need to see the user's surroundings,
-call request_camera. If you need a map view of their position, call get_map_image.
-If you're uncertain and neither tool would help — for example, real-time conditions
-you have no way of knowing — say so honestly and advise the user to ask someone
-nearby or call for assistance. Do not guess when the answer affects their safety.
-```
-
-Return values:
-- Direct answer → `{"reply": text, "needs_camera": False, "needs_map": False}`
-- Model calls `request_camera` → `{"needs_camera": True}`
-- Model calls `get_map_image` → backend fetches map tile from Google Static Maps, sends it back to Gemini as a second image alongside the conversation, gets a response → `{"reply": text}`
-- Image provided (second call after camera capture) → straight multimodal response → `{"reply": text}`
-
-The `get_map_image` flow is handled entirely backend-side — the frontend just sends the original message and gets back a text reply. It doesn't need to know a map image was fetched in the middle.
-
-**Fetching the map tile (inside get_map_image handling):**
-```python
-map_url = (
-    f"https://maps.googleapis.com/maps/api/staticmap"
-    f"?center={lat},{lng}&zoom=17&size=400x400&maptype=roadmap"
-    f"&markers=color:red%7C{lat},{lng}"
-    f"&key={GOOGLE_MAPS_API_KEY}"
-)
-# fetch map_url as bytes, encode to base64, send to Gemini as image part
-```
-
-Zoom level 17 gives a city-block-scale view — close enough to show the intersection the user is at without being too zoomed out to be useful.
-
----
+**get_moderation_state(session_id)** — returns current warning count, camera status, restriction status.
 
 ### places_service.py
 
-**search_place(query) → PlaceCandidate | None**
-- Calls `gmaps.places(query)` text search
-- Returns first result: name, formatted_address, geometry.location, place_id
-- Returns None if no results
+**search_place(query)** → `PlaceCandidate | None`
+- Calls Google Places API text search
+- Returns first result with name, address, lat/lng, place_id
 
-### directions_service.py (new)
+### helpers.py
 
-**generate_waypoints(origin_lat, origin_lng, dest_lat, dest_lng) → list[Waypoint]**
-- Calls `gmaps.directions(origin=..., destination=..., mode="walking")`
-- Iterates the steps in `result[0]["legs"][0]["steps"]`
-- For each step: strip HTML from `html_instructions`, use `end_location` for lat/lng
-- Build Waypoint with `landmark_hint = stripped instruction text`
-- Assign sequential ids, default `trigger_radius_meters=15`, default `audio_file`
-- Return waypoint list
-
-The Directions API steps use turn-by-turn text ("Turn left onto Bay St"). These become the raw `landmark_hint`. The narration Gemini call then rephrases them in sensory/accessibility language before speaking to the user — so the end experience is still landmark-based even though the source data is directional.
+- `strip_html(text)` — remove HTML tags from Directions API instructions
+- `compress_image(base64_data, max_size_bytes)` — resize/compress for Gemini input limits
+- `generate_id(prefix)` — short unique ID generator
+- `clamp(value, min_val, max_val)` — numeric clamping utility
 
 ---
 
@@ -331,33 +316,51 @@ GEMINI_API_KEY=...
 GOOGLE_MAPS_API_KEY=...
 ```
 
-Same Maps key works for Places API, Directions API, and Static Maps API — enable all three services in Google Cloud Console on the same key.
+Same Maps key works for Places API, Directions API, and Static Maps API.
 
 ---
 
-## Static File Serving
+## WebSocket Protocol (live.py)
 
-```python
-app.mount("/static", StaticFiles(directory="static"), name="static")
+The `/live/session` WebSocket handles all real-time communication for Premium tier.
+
+**Client → Server messages:**
+```json
+{"type": "audio", "data": "<base64 PCM audio chunk>"}
+{"type": "video_frame", "data": "<base64 JPEG frame>"}
+{"type": "camera_on"}
+{"type": "camera_off"}
+{"type": "text", "message": "..."}
+{"type": "location_update", "lat": 43.65, "lng": -79.38}
 ```
 
-Frontend fetches: `http://localhost:8000/static/audio/chime.mp3`
-
----
-
-## In-Memory Session and Fallback
-
-Sessions live in a dict. If the server restarts, the frontend's localStorage copy lets it call `/session/resume` to restore. Extension path: SQLAlchemy + SQLite, router code unchanged.
+**Server → Client messages:**
+```json
+{"type": "audio", "data": "<base64 PCM audio chunk>"}
+{"type": "transcript", "text": "...", "role": "assistant"}
+{"type": "transcript", "text": "...", "role": "user"}
+{"type": "tool_call", "name": "get_map_image", "status": "executing"}
+{"type": "tool_result", "name": "get_map_image", "status": "complete"}
+{"type": "moderation_warning", "message": "...", "strikes": 2}
+{"type": "error", "message": "...", "code": "..."}
+{"type": "connection_status", "status": "connected" | "reconnecting"}
+```
 
 ---
 
 ## Error Handling
 
-- Session not found → 404
-- Gemini fails → 503 (narration failure returns `narration: null`, does not crash route)
-- Places/Directions API fails → 503
-- Image too large → 413
-- Malformed request → 422 (auto)
+| Condition | HTTP/WS Code | Behaviour |
+|---|---|---|
+| Session not found | 404 | Clear error message |
+| Gemini REST fails | 503 | Narration returns null, does not crash route |
+| Gemini Live disconnects | WS close | Auto-reconnect with session state preservation |
+| Places/Directions API fails | 503 | Fallback to cached/hardcoded data where possible |
+| Image too large | 413 | Reject with size guidance |
+| Malformed request | 422 | Auto (Pydantic validation) |
+| Moderation violation | 200 | Warning in response, not an HTTP error |
+| Connection lost (client) | WS close | Server preserves session for 5 min reconnect window |
+| Rate limit exceeded | 429 | Retry-After header, graceful degradation to lower tier |
 
 ---
 
