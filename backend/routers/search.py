@@ -40,11 +40,17 @@ async def search_destination(request: SearchRequest) -> SearchResponse:
         HTTPException 503: If both Gemini and Places API fail.
     """
     # 1. Ask Gemini to interpret the query
-    matches = await gemini_service.search_destinations(
-        query=request.query,
-        user_lat=request.user_lat,
-        user_lng=request.user_lng,
-    )
+    try:
+        matches = await gemini_service.search_destinations(
+            query=request.query,
+            user_lat=request.user_lat,
+            user_lng=request.user_lng,
+        )
+    except gemini_service.GeminiServiceUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Search service is temporarily unavailable. Please retry in a moment.",
+        ) from exc
 
     if not matches:
         raise HTTPException(

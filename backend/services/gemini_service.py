@@ -16,7 +16,7 @@ from typing import Optional
 import httpx
 from dotenv import load_dotenv
 from google import genai
-from google.genai import types
+from google.genai import errors as genai_errors, types
 
 from models.schemas import (
     GeminiPlaceMatch,
@@ -30,9 +30,13 @@ from services.session_service import build_route_context
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-MODEL = "gemini-2.0-flash"
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 
 _client: Optional[genai.Client] = None
+
+
+class GeminiServiceUnavailableError(RuntimeError):
+    """Raised when Gemini is temporarily unavailable for search."""
 
 
 def _get_client() -> genai.Client:
@@ -96,9 +100,16 @@ async def search_destinations(
         result = GeminiSearchResult(**data)
         return result.matches
 
-    except Exception:
+    except genai_errors.ServerError as exc:
+        logger.exception("Gemini search_destinations failed: upstream server unavailable")
+        raise GeminiServiceUnavailableError(
+            "Gemini service is temporarily unavailable. Please retry shortly."
+        ) from exc
+    except Exception as exc:
         logger.exception("Gemini search_destinations failed")
-        return []
+        raise GeminiServiceUnavailableError(
+            "Gemini search failed unexpectedly. Please retry."
+        ) from exc
 
 
 # ===================================================================
