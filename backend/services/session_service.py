@@ -234,21 +234,9 @@ def process_location_update(
     if band_changed:
         session.last_distance_band = new_band
 
-    # Check trigger (arrived at waypoint)
+    # Check trigger (arrived at waypoint). We do not advance here:
+    # /session/next is the single transition point for progression.
     triggered = distance <= current_wp.trigger_radius_meters
-
-    next_wp: Optional[Waypoint] = None
-    game_complete = False
-
-    if triggered:
-        session.completed_waypoint_ids.append(current_wp.id)
-        session.current_waypoint_index += 1
-        session.last_distance_band = DistanceBand.FAR
-
-        if session.current_waypoint_index >= len(session.waypoints):
-            game_complete = True
-        else:
-            next_wp = session.waypoints[session.current_waypoint_index]
 
     return {
         "distance_meters": round(distance, 1),
@@ -257,8 +245,8 @@ def process_location_update(
         "band_changed": band_changed,
         "new_band": new_band,
         "current_waypoint": current_wp,
-        "next_waypoint": next_wp if triggered else current_wp,
-        "game_complete": game_complete,
+        "next_waypoint": current_wp,
+        "game_complete": False,
     }
 
 
@@ -276,12 +264,19 @@ def advance_to_next(session_id: str) -> dict:
     """
     session = require_session(session_id)
 
-    # If current hasn't been marked complete yet, do it now
-    if session.current_waypoint_index < len(session.waypoints):
-        current_wp = session.waypoints[session.current_waypoint_index]
-        if current_wp.id not in session.completed_waypoint_ids:
-            session.completed_waypoint_ids.append(current_wp.id)
-        session.current_waypoint_index += 1
+    # If already complete, return terminal state.
+    if session.current_waypoint_index >= len(session.waypoints):
+        return {
+            "next_waypoint": None,
+            "waypoints_remaining": 0,
+            "game_complete": True,
+        }
+
+    # Mark current as complete and move exactly one step.
+    current_wp = session.waypoints[session.current_waypoint_index]
+    if current_wp.id not in session.completed_waypoint_ids:
+        session.completed_waypoint_ids.append(current_wp.id)
+    session.current_waypoint_index += 1
 
     remaining = len(session.waypoints) - session.current_waypoint_index
     game_complete = remaining <= 0
