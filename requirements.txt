@@ -1,0 +1,38 @@
+# ── Core API framework ────────────────────────────────────────────────────────
+fastapi
+uvicorn[standard]
+python-multipart
+
+# ── Data validation ───────────────────────────────────────────────────────────
+pydantic
+
+# ── HTTP client (for calling external APIs async) ─────────────────────────────
+httpx
+
+# ── Geo calculations (haversine distance, bearing) ────────────────────────────
+geopy
+
+# ── Environment variable management ──────────────────────────────────────────
+python-dotenv
+
+# ── Google Generative AI SDK ──────────────────────────────────────────────────
+# Model: gemini-3-flash-preview
+# Used for: NLP destination search (structured output), route narration,
+# in-session AI assistant (function calling + multimodal), camera visual grounding.
+# This SDK handles thought signatures automatically — no manual management needed.
+google-generativeai
+
+# ── Google Maps / Places (server-side) ────────────────────────────────────────
+# Used for: resolving Gemini's NLP place matches to real GPS coordinates
+googlemaps
+
+# ── Text-to-Speech ────────────────────────────────────────────────────────────
+# Using browser-native Web Speech API (SpeechSynthesis) — no library or cost.
+# Post-hackathon: swap for Google Cloud TTS for higher quality voices.
+# google-cloud-texttospeech
+
+# ── Optional: persistence (post-hackathon) ────────────────────────────────────
+# Client-side session persistence via localStorage — no server DB needed for hackathon.
+# sqlalchemy
+# aiosqlite
+# Updated: google-generativeai covers Gemini 3 Flash. googlemaps covers Places, Directions, and Static Maps.

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wayfind</title>
+  <link rel="stylesheet" href="styles/main.css" />
+</head>
+<body>
+  <div id="app" role="main" aria-live="polite">
+    <!-- Pages rendered here by JS -->
+  </div>
+
+  <!-- Utilities (load first) -->
+  <script src="utils/api.js"></script>
+  <script src="utils/geo.js"></script>
+  <script src="utils/audio.js"></script>
+  <script src="utils/speech.js"></script>
+  <script src="utils/session.js"></script>
+
+  <!-- Components -->
+  <script src="components/map.js"></script>
+  <script src="components/assistant.js"></script>
+  <script src="components/clueCard.js"></script>
+  <script src="components/searchCard.js"></script>
+  <script src="components/waypointList.js"></script>
+
+  <!-- Pages -->
+  <script src="pages/home.js"></script>
+  <script src="pages/overview.js"></script>
+  <script src="pages/game.js"></script>
+  <script src="pages/complete.js"></script>
+
+  <!-- Entry point -->
+  <script src="app.js"></script>
+
+  <!-- Google Maps JS API - add your key here -->
+  <!-- <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_KEY&callback=initMap" async defer></script> -->
+</body>
+</html>
