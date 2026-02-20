@@ -32,7 +32,7 @@ from services.session_service import build_route_context
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-MODEL = "gemini-2.0-flash-live-001"
+MODEL = os.getenv("GEMINI_LIVE_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
 
 # ---------------------------------------------------------------------------
 # System prompt for live sessions
