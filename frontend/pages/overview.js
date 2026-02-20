@@ -90,7 +90,7 @@ function renderOverview(container) {
   cancelBtn.addEventListener('click', () => {
     stopSpeaking();
     clearSession();
-    _resetState();
+    resetState();
     navigateTo((el) => renderHome(el, null));
   });
 
@@ -148,19 +148,6 @@ async function _loadDescription(panel, startBtn) {
     // Allow starting even if description fails
     startBtn.disabled = false;
   }
-}
-
-/**
- * Reset global state to defaults. Used when cancelling a route.
- */
-function _resetState() {
-  state.sessionId = null;
-  state.destinationName = null;
-  state.waypoints = [];
-  state.currentWaypointIndex = 0;
-  state.completedIds = [];
-  state.gameComplete = false;
-  state.lastNarration = null;
 }
 
 function _overviewEscape(str) {

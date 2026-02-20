@@ -77,7 +77,7 @@ function renderGame(container) {
   document.getElementById('end-nav').addEventListener('click', () => {
     _teardownGame();
     clearSession();
-    _resetState();
+    resetState();
     navigateTo((el) => renderHome(el, null));
   });
 

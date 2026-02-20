@@ -45,24 +45,12 @@ function renderComplete(container) {
   page.querySelector('#new-route-btn').addEventListener('click', () => {
     stopSpeaking();
     clearSession();
-    _resetCompleteState();
+    resetState();
     navigateTo((el) => renderHome(el, null));
   });
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────
-
-function _resetCompleteState() {
-  state.sessionId = null;
-  state.destinationName = null;
-  state.waypoints = [];
-  state.currentWaypointIndex = 0;
-  state.completedIds = [];
-  state.gameComplete = false;
-  state.lastNarration = null;
-  state.userLocation = { lat: null, lng: null };
-  state.userHeading = 0;
-}
 
 function _completeEscape(str) {
   if (!str) return '';

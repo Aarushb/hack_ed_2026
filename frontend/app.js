@@ -20,6 +20,25 @@ const state = {
   tier: 'premium',       // service tier: basic | standard | premium
 };
 
+// ── State reset ───────────────────────────────────────────────────────────
+
+/**
+ * Reset all global state to defaults. Called when ending navigation,
+ * cancelling a route, or starting fresh from the complete screen.
+ */
+function resetState() {
+  state.sessionId = null;
+  state.destinationName = null;
+  state.waypoints = [];
+  state.currentWaypointIndex = 0;
+  state.completedIds = [];
+  state.userLocation = { lat: null, lng: null };
+  state.userHeading = 0;
+  state.gameComplete = false;
+  state.lastNarration = null;
+  state.tier = 'premium';
+}
+
 // ── Page navigation ───────────────────────────────────────────────────────
 
 /**
