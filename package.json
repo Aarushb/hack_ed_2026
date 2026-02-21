@@ -1,0 +1,9 @@
+{
+  "name": "wayfind-hackathon",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:vercel": "node scripts/build-vercel.mjs",
+    "deploy:vercel": "vercel --prod"
+  }
+}
