@@ -20,7 +20,6 @@ services:
   - type: web
     name: wayfind-frontend
     runtime: static
-    plan: free
     buildCommand: npm install && npm run build:static
     staticPublishPath: dist
     envVars:

@@ -23,6 +23,8 @@ This is the lowest-hassle setup for this repo:
 
 If you see `unknown type "static_site"`, your Blueprint is using an older service type. This repo’s `render.yaml` uses the current format: static sites are `type: web` with `runtime: static`.
 
+If you see `services[1].plan no such plan free for service type web`, that’s because Render static sites do not support a `plan` field in the Blueprint schema. This repo’s `render.yaml` does not set `plan` for the static site.
+
 ## 2) Set the link between frontend and backend
 Once the backend deploys, copy its public URL:
 - Example: `https://wayfind-backend.onrender.com`
