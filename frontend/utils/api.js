@@ -9,6 +9,9 @@ const API_BASE = (window.__WAYFIND_CONFIG__ && window.__WAYFIND_CONFIG__.API_BAS
 // Timeout for standard REST requests (ms)
 const REQUEST_TIMEOUT_MS = 15000;
 
+// Some endpoints (Gemini / Directions) can legitimately take longer.
+const LONG_REQUEST_TIMEOUT_MS = 45000;
+
 // HTTP status codes with user-facing meaning
 const STATUS_MESSAGES = {
   400: 'Bad request — check your input.',
@@ -43,9 +46,9 @@ class ApiError extends Error {
  * @throws {ApiError} on non-2xx responses
  * @throws {Error} on network failure or timeout
  */
-async function apiFetch(path, body = null) {
+async function apiFetch(path, body = null, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   const options = {
     method: body ? 'POST' : 'GET',
@@ -62,7 +65,7 @@ async function apiFetch(path, body = null) {
   } catch (err) {
     clearTimeout(timeout);
     if (err.name === 'AbortError') {
-      throw new Error('Request timed out — check your connection and try again.');
+      throw new Error('Request timed out — the server took too long. Try again.');
     }
     throw new Error('Network error — could not reach the server.');
   }
@@ -93,7 +96,7 @@ async function apiFetch(path, body = null) {
  * @returns {Promise<{candidates: Array}>}
  */
 async function apiSearchDestination(query, lat, lng) {
-  return apiFetch('/search/destination', { query, user_lat: lat, user_lng: lng });
+  return apiFetch('/search/destination', { query, user_lat: lat, user_lng: lng }, LONG_REQUEST_TIMEOUT_MS);
 }
 
 /**
@@ -109,7 +112,7 @@ async function apiStartSession(placeId, name, destLat, destLng, userLat, userLng
     user_lat: userLat,
     user_lng: userLng,
     tier,
-  });
+  }, LONG_REQUEST_TIMEOUT_MS);
 }
 
 /**
@@ -117,7 +120,7 @@ async function apiStartSession(placeId, name, destLat, destLng, userLat, userLng
  * @returns {Promise<{description: string, waypoint_summary: Array}>}
  */
 async function apiDescribeSession(sessionId) {
-  return apiFetch('/session/describe', { session_id: sessionId });
+  return apiFetch('/session/describe', { session_id: sessionId }, LONG_REQUEST_TIMEOUT_MS);
 }
 
 /**
@@ -171,5 +174,5 @@ async function apiAssistantMessage(sessionId, message, imageBase64 = null) {
     session_id: sessionId,
     message,
     image_base64: imageBase64,
-  });
+  }, LONG_REQUEST_TIMEOUT_MS);
 }
