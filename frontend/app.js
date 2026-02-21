@@ -10,9 +10,12 @@ const state = {
   userLocation: { lat: null, lng: null },
   userHeading: 0,       // degrees from device compass (0 = North)
   gameComplete: false,
+  lastNarration: null,
 };
 
 function navigateTo(renderFn) {
+  if (typeof renderFn !== "function") return;
+  
   const app = document.getElementById("app");
   app.innerHTML = "";
   renderFn(app);
