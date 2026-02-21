@@ -21,6 +21,8 @@ This is the lowest-hassle setup for this repo:
    - Frontend:
      - `WAYFIND_API_BASE`
 
+If you see `unknown type "static_site"`, your Blueprint is using an older service type. This repo’s `render.yaml` uses the current format: static sites are `type: web` with `runtime: static`.
+
 ## 2) Set the link between frontend and backend
 Once the backend deploys, copy its public URL:
 - Example: `https://wayfind-backend.onrender.com`
