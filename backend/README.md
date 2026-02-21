@@ -25,3 +25,8 @@ uvicorn main:app --reload
 API docs auto-generated at: http://localhost:8000/docs
 
 API base path: http://localhost:8000/api
+
+## Common local issue: 501 on /api/*
+If you see `501 Unsupported method ('POST')` in a terminal running `python -m http.server`,
+your frontend is being served by Python's static server on the same port as the API base.
+Run the frontend on a different port (e.g. 5173) and keep the backend on 8000.
