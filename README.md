@@ -38,3 +38,5 @@ Tip: on Windows you can run `scripts\dev-local.cmd` to start both.
 ```
 
 See `docs/` for full design documentation before writing any code.
+
+random test.
