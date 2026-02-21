@@ -1,18 +1,18 @@
 // overview.js - accessible route summary
 function renderOverview(root) {
-    root.innerHTML = '
+    root.innerHTML = `
         <main class="overview-page">
             <h1>Route Overview</h1>
             <p>Destination: ${state.destinationName || "Unknown"}</p>
             
             <div>
                 <button id="view-narrative-btn" type="button">Narrative</button>
-                <button id="view-list-btn": type="button">Waypoint List</button>
+                <button id="view-list-btn" type="button">Waypoint List</button>
             </div>
             
             <section id="narrative-view" aria-live="polite">
                 <h2>Narrative Summary</h2>
-                <p id="route-description">Loading route summary</p>
+                <p id="route-description">Loading route summary...</p>
                 <button id="read-summary-btn" type="button">Read Aloud</button>
                 <button id="stop-summary-btn" type="button">Stop</button>
             </section>
@@ -24,7 +24,7 @@ function renderOverview(root) {
             
             <button id="start-navigation-btn" type="button">Start Navigation</button>
         </main>
-      ';
+      `;
     
     const narrativeView = document.getElementById("narrative-view");
     const listView = document.getElementById("list-view");
@@ -33,6 +33,11 @@ function renderOverview(root) {
     document.getElementById("view-narrative-btn").addEventListener("click", () => {
         narrativeView.hidden = false;
         listView.hidden = true;
+    });
+
+    document.getElementById("view-list-btn").addEventListener("click", () => {
+        narritiveView.hidden = true;
+        listView.hidden = false;
     });
 
     const listContainer = document.getElementById("waypoint-list-container");
