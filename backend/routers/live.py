@@ -137,8 +137,6 @@ async def live_session_ws(websocket: WebSocket) -> None:
 
     finally:
         # Clean up the live session
-        if live is not None:
-            await live.close()
         await live_service.close_live_session(session_id)
         logger.info("Live session %s cleaned up", session_id)
 

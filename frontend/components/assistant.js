@@ -849,7 +849,16 @@ function _getLivePlaybackCtx() {
 
 function _playLivePcmAudio(base64, mimeType) {
   if (!base64) return;
-  if (mimeType && mimeType !== 'audio/pcm') return;
+  if (mimeType && !String(mimeType).startsWith('audio/pcm')) return;
+
+  let declaredRate = LIVE_AUDIO_SAMPLE_RATE;
+  if (mimeType) {
+    const m = String(mimeType).match(/(?:^|;)\s*rate\s*=\s*(\d+)/i);
+    if (m && m[1]) {
+      const r = Number(m[1]);
+      if (Number.isFinite(r) && r >= 8000 && r <= 48000) declaredRate = r;
+    }
+  }
 
   const bytes = _base64ToUint8Array(base64);
   if (!bytes || bytes.length < 4) return;
@@ -871,7 +880,7 @@ function _playLivePcmAudio(base64, mimeType) {
     ctx.resume().catch(() => {});
   }
 
-  const buffer = ctx.createBuffer(1, floats.length, LIVE_AUDIO_SAMPLE_RATE);
+  const buffer = ctx.createBuffer(1, floats.length, declaredRate);
   buffer.copyToChannel(floats, 0);
 
   const src = ctx.createBufferSource();
