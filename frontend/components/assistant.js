@@ -28,6 +28,7 @@ let _micProcessor = null; // ScriptProcessorNode fallback
 let _micWorkletNode = null;
 let _micActive = false;
 let _lastSilenceSentAt = 0;
+let _micInputSampleRate = LIVE_AUDIO_SAMPLE_RATE;
 
 // Live audio playback (PCM)
 let _playbackTime = 0;
@@ -684,6 +685,8 @@ async function _startLiveMic() {
     _micCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
 
+  _micInputSampleRate = Number(_micCtx?.sampleRate) || LIVE_AUDIO_SAMPLE_RATE;
+
   try {
     if (_micCtx.state === 'suspended') await _micCtx.resume();
   } catch (_) {}
@@ -790,22 +793,26 @@ function _sendPcmFloats(float32) {
   if (!_liveWs || _liveWs.readyState !== WebSocket.OPEN) return;
   if (_liveWs.bufferedAmount > LIVE_WS_MAX_BUFFERED_BYTES) return;
 
+  const audio = (_micInputSampleRate && _micInputSampleRate !== LIVE_AUDIO_SAMPLE_RATE)
+    ? _resampleFloat32(float32, _micInputSampleRate, LIVE_AUDIO_SAMPLE_RATE)
+    : float32;
+
   // Lightweight silence gating to cut bandwidth when truly silent.
   let sumSq = 0;
-  for (let i = 0; i < float32.length; i++) {
-    const v = float32[i];
+  for (let i = 0; i < audio.length; i++) {
+    const v = audio[i];
     sumSq += v * v;
   }
-  const rms = Math.sqrt(sumSq / Math.max(1, float32.length));
+  const rms = Math.sqrt(sumSq / Math.max(1, audio.length));
   const now = Date.now();
   if (rms < 0.002) {
     if (now - _lastSilenceSentAt < 500) return;
     _lastSilenceSentAt = now;
   }
 
-  const pcm16 = new Int16Array(float32.length);
-  for (let i = 0; i < float32.length; i++) {
-    let s = Math.max(-1, Math.min(1, float32[i]));
+  const pcm16 = new Int16Array(audio.length);
+  for (let i = 0; i < audio.length; i++) {
+    let s = Math.max(-1, Math.min(1, audio[i]));
     pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
   }
   const b64 = _arrayBufferToBase64(pcm16.buffer);
@@ -814,6 +821,26 @@ function _sendPcmFloats(float32) {
   } catch (_) {
     // ignore send failures
   }
+}
+
+function _resampleFloat32(input, inRate, outRate) {
+  if (!input || input.length === 0) return input;
+  if (!inRate || !outRate || inRate === outRate) return input;
+
+  const ratio = inRate / outRate;
+  const outLength = Math.max(1, Math.floor(input.length / ratio));
+  const output = new Float32Array(outLength);
+
+  for (let i = 0; i < outLength; i++) {
+    const srcPos = i * ratio;
+    const idx = Math.floor(srcPos);
+    const frac = srcPos - idx;
+    const s0 = input[idx] || 0;
+    const s1 = input[idx + 1] || s0;
+    output[i] = s0 + (s1 - s0) * frac;
+  }
+
+  return output;
 }
 
 // ── Premium: camera frame streaming ───────────────────────────────────────

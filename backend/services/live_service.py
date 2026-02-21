@@ -32,8 +32,9 @@ from services.session_service import build_route_context
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-# The Live API model - use gemini-2.0-flash-live-001 for stable live API support
-MODEL = os.getenv("GEMINI_LIVE_MODEL", "gemini-2.0-flash-live-001")
+# Live API model (prefer env var; keep a conservative default).
+# If your deployment uses a different Live model, set GEMINI_LIVE_MODEL explicitly.
+MODEL = os.getenv("GEMINI_LIVE_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
 
 # ---------------------------------------------------------------------------
 # System prompt for live sessions
@@ -203,10 +204,8 @@ class LiveSession:
         )
 
         client = self._get_client()
-        self._session_cm = client.aio.live.connect(
-            model=MODEL,
-            config=config,
-        )
+        logger.info("Connecting Gemini Live session %s with model=%s", self.session_id, MODEL)
+        self._session_cm = client.aio.live.connect(model=MODEL, config=config)
 
         # Keep a single persistent session open for the lifetime of this proxy.
         self._session = await self._session_cm.__aenter__()
