@@ -32,7 +32,8 @@ from services.session_service import build_route_context
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-MODEL = os.getenv("GEMINI_LIVE_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
+# The Live API model - use gemini-2.0-flash-live-001 for stable live API support
+MODEL = os.getenv("GEMINI_LIVE_MODEL", "gemini-2.0-flash-live-001")
 
 # ---------------------------------------------------------------------------
 # System prompt for live sessions
@@ -60,9 +61,9 @@ LIVE_SYSTEM_PROMPT = (
     "7. When you can see via camera, describe what you see and give "
     "actionable guidance. 'I can see a construction barrier ahead — there's "
     "a path around it to your left.'\n"
-    "8. Start the conversation with a brief introduction: 'Hi, I'm NorthStar "
-    "your navigation assistant. I can see you're headed to [destination]. "
-    "Let's get you there.' Then get straight to guidance."
+    "8. WAIT for the user to speak first before responding. Do not start "
+    "talking until you hear them. When they do speak, give a brief greeting "
+    "like 'Hi, I'm NorthStar. How can I help?' and then assist them."
 )
 
 # ---------------------------------------------------------------------------
@@ -219,15 +220,19 @@ class LiveSession:
             audio_base64: Base64-encoded PCM audio data.
         """
         if self._session is None:
+            logger.warning("Cannot send audio: session is None")
             return
 
-        audio_bytes = base64.b64decode(audio_base64)
-        await self._session.send_realtime_input(
-            audio=types.Blob(
-                data=audio_bytes,
-                mime_type="audio/pcm;rate=16000",
-            ),
-        )
+        try:
+            audio_bytes = base64.b64decode(audio_base64)
+            await self._session.send_realtime_input(
+                audio=types.Blob(
+                    data=audio_bytes,
+                    mime_type="audio/pcm;rate=16000",
+                ),
+            )
+        except Exception as e:
+            logger.exception("Error sending audio to Gemini: %s", e)
 
     async def send_video_frame(self, frame_base64: str) -> None:
         """Send a video frame (JPEG) to Gemini.
@@ -277,55 +282,59 @@ class LiveSession:
             protocol defined in api-endpoints.md.
         """
         if self._session is None:
+            logger.warning("Cannot receive responses: session is None")
             return
 
         session = self._session
-        async for response in session.receive():
-            # Handle server content (audio + optional transcripts)
-            if response.server_content:
-                content = response.server_content
+        try:
+            async for response in session.receive():
+                # Handle server content (audio + optional transcripts)
+                if response.server_content:
+                    content = response.server_content
 
-                input_tx = getattr(content, "input_transcription", None)
-                if input_tx is not None and getattr(input_tx, "text", None):
-                    yield {
-                        "type": "transcript",
-                        "text": input_tx.text,
-                        "role": "user",
-                    }
+                    input_tx = getattr(content, "input_transcription", None)
+                    if input_tx is not None and getattr(input_tx, "text", None):
+                        logger.debug("User transcript: %s", input_tx.text[:50] if input_tx.text else "")
+                        yield {
+                            "type": "transcript",
+                            "text": input_tx.text,
+                            "role": "user",
+                        }
 
-                output_tx = getattr(content, "output_transcription", None)
-                if output_tx is not None and getattr(output_tx, "text", None):
-                    yield {
-                        "type": "transcript",
-                        "text": output_tx.text,
-                        "role": "assistant",
-                    }
+                    output_tx = getattr(content, "output_transcription", None)
+                    if output_tx is not None and getattr(output_tx, "text", None):
+                        logger.debug("Assistant transcript: %s", output_tx.text[:50] if output_tx.text else "")
+                        yield {
+                            "type": "transcript",
+                            "text": output_tx.text,
+                            "role": "assistant",
+                        }
 
-                if content.model_turn:
-                    for part in content.model_turn.parts:
-                        if part.text:
-                            yield {
-                                "type": "transcript",
-                                "text": part.text,
-                                "role": "assistant",
-                            }
-                        if part.inline_data:
-                            mime = part.inline_data.mime_type or ""
-                            if mime.startswith("audio/pcm") and "rate=" not in mime:
-                                mime = "audio/pcm;rate=24000"
-                            yield {
-                                "type": "audio",
-                                "data": base64.b64encode(
-                                    part.inline_data.data
-                                ).decode(),
-                                "mime_type": mime,
-                            }
+                    if content.model_turn:
+                        for part in content.model_turn.parts:
+                            if part.text:
+                                yield {
+                                    "type": "transcript",
+                                    "text": part.text,
+                                    "role": "assistant",
+                                }
+                            if part.inline_data:
+                                mime = part.inline_data.mime_type or ""
+                                if mime.startswith("audio/pcm") and "rate=" not in mime:
+                                    mime = "audio/pcm;rate=24000"
+                                yield {
+                                    "type": "audio",
+                                    "data": base64.b64encode(
+                                        part.inline_data.data
+                                    ).decode(),
+                                    "mime_type": mime,
+                                }
 
-                if content.turn_complete:
-                    yield {"type": "turn_complete"}
+                    if content.turn_complete:
+                        yield {"type": "turn_complete"}
 
-            # Handle tool calls
-            if response.tool_call:
+                # Handle tool calls
+                if response.tool_call:
                 for fn_call in response.tool_call.function_calls:
                     yield {
                         "type": "tool_call",
@@ -362,6 +371,10 @@ class LiveSession:
                         "name": fn_call.name,
                         "status": "complete",
                     }
+
+        except Exception as e:
+            logger.exception("Error in Gemini receive loop: %s", e)
+            raise
 
     async def _execute_tool(
         self,

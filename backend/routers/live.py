@@ -83,13 +83,15 @@ async def live_session_ws(websocket: WebSocket) -> None:
     # Create the Gemini Live session
     live: live_service.LiveSession | None = None
     try:
+        logger.info("Creating Gemini Live session for %s", session_id)
         live = await live_service.create_live_session(nav_session)
+        logger.info("Gemini Live session created successfully for %s", session_id)
         await websocket.send_json({
             "type": "connection_status",
             "status": "connected",
         })
     except Exception as exc:
-        logger.exception("Failed to create live session for %s", session_id)
+        logger.exception("Failed to create live session for %s: %s", session_id, exc)
         await websocket.send_json({
             "type": "error",
             "message": f"Failed to initialise AI session: {exc}",
