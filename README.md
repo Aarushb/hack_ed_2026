@@ -1,5 +1,8 @@
 # Project Root
 
+## Fastest deployment
+Use Render (backend + frontend, push-to-deploy): `docs/deploy-render.md`.
+
 ## Quick Setup
 
 **Backend**

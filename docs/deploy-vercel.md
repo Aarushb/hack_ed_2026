@@ -49,6 +49,13 @@ Vercel deploys the app as a static site and injects the backend URL at build tim
    - `WAYFIND_API_BASE` = `https://YOUR_BACKEND_HOST/api`
 5. Deploy.
 
+### If your backend is also on Vercel
+You can still link Basic/Standard REST endpoints the same way:
+- Set `WAYFIND_API_BASE` in the **frontend** project to your **backend** project URL + `/api`
+   - Example: `https://wayfind-backend.vercel.app/api`
+
+Note: Premium Live (`/api/live/session` WebSocket) will likely fail on a Vercel-hosted backend due to the WebSocket limitation above.
+
 ### From your terminal (optional)
 Install Node.js + npm, then run:
 
