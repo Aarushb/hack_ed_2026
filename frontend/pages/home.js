@@ -1,18 +1,18 @@
 // home.js - destination search + resume prompt
 function renderHome(root, savedSession = null) {
-    root.innerHTML = '
+    root.innerHTML = `
         <main class="home-page">
             <h1>North Star</h1>
             <p>Describe where you want to go.</p>
             
             ${
                 savedSession
-                    ? '<section class="resume-card">
+                    ? `section class="resume-card">
                         <h2>Resume route?</h2>
                         <p>Continue to ${savedSession.destinationName || "your destination"}.</p>
                         <button id="resume-btn" type="button">Resume</button>
                         <button id="new-route-btn" type="button">Start New Route</button>
-                       </section>'
+                       </section>`
                     : ""
             }
 
@@ -26,15 +26,14 @@ function renderHome(root, savedSession = null) {
                 <h2>Results</h2>
                 <div id="search-results" aria-live="polite"></div>
             </section>
-        </main>
-      ';
+        </main>`;
     
     const resumeBtn = document.getElementById("resume-btn");
     const newRouteBtn = document.getElementById("new-route-btn");
 
     if (resumeBtn) {
         resumeBtn.addEventListener("click", () => {
-            state.sessionId = savedSession.session.Id;
+            state.sessionId = savedSession.sessionId;
             state.destinationName = savedSession.destinationName;
             state.waypoints = savedSession.waypoints || [];
             state.currentWaypointIndex = savedSession.currentWaypointIndex || 0;
@@ -46,7 +45,7 @@ function renderHome(root, savedSession = null) {
     if (newRouteBtn) {
         newRouteBtn.addEventListener("click", () => {
             clearSession();
-            navigateto((el) => renderHome(el, null));
+            navigateTo((el) => renderHome(el, null));
         });
     }
 
@@ -55,7 +54,7 @@ function renderHome(root, savedSession = null) {
 
     form.addEventListener("submit", async (e) => {
         e.preventDefault();
-        const query = document.getElementById("destination-input").ariaValueMax.trim();
+        const query = document.getElementById("destination-input").value.trim();
         if (!query) return;
 
         results.innerHTML = "<p>Searching...</p>";
@@ -100,7 +99,7 @@ function renderHome(root, savedSession = null) {
                 );
             });
         } catch (err) {
-            results.innerHTML = '<p>Search failed: ${err.message}</p>';
+            results.innerHTML = `<p>Search failed: ${err.message}</p>`;
         }
     });
 }
