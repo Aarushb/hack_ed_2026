@@ -397,6 +397,9 @@ function _handleLiveMessage(msg) {
     case 'tool_call':
       renderAssistantMessage('system', `🔧 Using ${msg.name}…`);
       break;
+    case 'tool_result':
+      renderAssistantMessage('system', `✅ ${msg.name} complete.`);
+      break;
     case 'moderation_warning':
       renderAssistantMessage('system', `⚠️ ${msg.message}`);
       break;
@@ -404,9 +407,16 @@ function _handleLiveMessage(msg) {
       renderAssistantMessage('system', `Error: ${msg.message}`);
       break;
     case 'connection_status':
-      if (msg.status === 'ready') {
-        renderAssistantMessage('system', 'Live session ready.');
+      if (msg.status === 'connected') {
+        renderAssistantMessage('system', '🔴 Live session connected.');
+      } else if (msg.status === 'reconnecting') {
+        renderAssistantMessage('system', 'Reconnecting live session…');
+      } else if (msg.status) {
+        renderAssistantMessage('system', `Live session status: ${msg.status}`);
       }
+      break;
+    case 'turn_complete':
+      // No UI needed; included for protocol completeness.
       break;
     default:
       // Unknown message type — ignore gracefully
