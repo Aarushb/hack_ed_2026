@@ -42,10 +42,44 @@
   <script src="app.js"></script>
 
   <!--
-    Google Maps JS API — add your API key below to enable the map.
-    The app works fully without it; the map is a visual supplement only.
-    Enable Maps JavaScript API in Google Cloud Console.
+    Google Maps JS API loader.
+    Reads key from window.__WAYFIND_CONFIG__.GOOGLE_MAPS_API_KEY.
+    Keep that key out of committed source by injecting it at runtime.
   -->
-  <!-- <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_KEY" async defer></script> -->
+  <script>
+    (function loadGoogleMaps() {
+      function injectMapsScript(apiKey) {
+        if (!apiKey || document.querySelector('script[data-wayfind-maps="1"]')) return;
+        const script = document.createElement("script");
+        script.src = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(apiKey);
+        script.async = true;
+        script.defer = true;
+        script.dataset.wayfindMaps = "1";
+        document.body.appendChild(script);
+      }
+
+      const cfg = window.__WAYFIND_CONFIG__ || {};
+      const configuredKey = cfg.GOOGLE_MAPS_API_KEY;
+      if (configuredKey) {
+        injectMapsScript(configuredKey);
+        return;
+      }
+
+      const apiBase = cfg.API_BASE;
+      if (!apiBase) return;
+
+      fetch(`${apiBase}/config/public`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const keyFromBackend = data && data.google_maps_js_api_key;
+          if (keyFromBackend) {
+            injectMapsScript(keyFromBackend);
+          }
+        })
+        .catch(() => {
+          // Maps remains optional; app continues without visual map.
+        });
+    })();
+  </script>
 </body>
 </html>

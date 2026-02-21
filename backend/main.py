@@ -10,6 +10,7 @@ sets up structured logging.  Run with:
 from __future__ import annotations
 
 import logging
+import os
 import sys
 
 from fastapi import FastAPI
@@ -87,3 +88,11 @@ def root():
 def api_root():
     """API-prefixed health check endpoint."""
     return {"status": "ok", "version": "0.2.0"}
+
+
+@app.get(f"{API_PREFIX}/config/public")
+def public_config():
+    """Expose non-sensitive runtime config needed by the frontend."""
+    return {
+        "google_maps_js_api_key": os.getenv("GOOGLE_MAPS_JS_API_KEY", ""),
+    }
