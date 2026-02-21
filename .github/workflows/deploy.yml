@@ -32,9 +32,9 @@ jobs:
           key: ${{ secrets.SERVER_SSH_KEY }}
           port: YOUR_CUSTOM_PORT 
           passphrase: ${{ secrets.SERVER_SSH_PASSPHRASE }} 
-          source: "backend/*"
-          target: "/home/bilbal/backend"
-          strip_components: 1
+          source: "backend" # <-- Changed this to copy the whole folder
+          target: "/home/bilbal" # <-- Changed this so it creates the backend folder automatically
+          # <-- Removed strip_components entirely from this step
 
       - name: Deploy Frontend and Restart Backend
         uses: appleboy/ssh-action@master
