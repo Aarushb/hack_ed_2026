@@ -467,7 +467,16 @@ function connectLiveSession(sessionId) {
   if (_liveWs) _disconnectLiveSession();
   _clearReconnect();
 
-  const wsUrl = API_BASE.replace(/^http/, 'ws') + `/live/session?session_id=${encodeURIComponent(sessionId)}`;
+  // Build WebSocket URL. Handle both absolute URLs and relative paths.
+  let wsUrl;
+  if (API_BASE.startsWith('http://') || API_BASE.startsWith('https://')) {
+    // Absolute URL — convert http(s) to ws(s)
+    wsUrl = API_BASE.replace(/^http/, 'ws') + `/live/session?session_id=${encodeURIComponent(sessionId)}`;
+  } else {
+    // Relative path (e.g., "/api") — build full WebSocket URL from current location
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    wsUrl = `${protocol}//${window.location.host}${API_BASE}/live/session?session_id=${encodeURIComponent(sessionId)}`;
+  }
 
   try {
     _liveWs = new WebSocket(wsUrl);

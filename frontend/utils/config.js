@@ -2,14 +2,10 @@
 
 window.__WAYFIND_CONFIG__ = window.__WAYFIND_CONFIG__ || {};
 
-const host = String((window.location && window.location.hostname) || "").toLowerCase();
-const isLocal = host === "localhost" || host === "127.0.0.1";
-
 if (!window.__WAYFIND_CONFIG__.API_BASE) {
-  // Local backend + deployed Render backend.
-  window.__WAYFIND_CONFIG__.API_BASE = isLocal
-    ? "http://127.0.0.1:8000/api"
-    : "https://wayfind-backend.onrender.com/api";
+  // Use relative path — nginx will proxy /api to the backend.
+  // This works for any domain (localhost, production server, etc.)
+  window.__WAYFIND_CONFIG__.API_BASE = "/api";
 }
 
 // Keep empty by default. Set this at runtime from a non-committed source.
