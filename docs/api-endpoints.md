@@ -1,6 +1,6 @@
 # API Endpoints
 
-All endpoints from `http://localhost:8000` in dev. Frontend calls via `frontend/utils/api.js`. Interactive docs at `http://localhost:8000/docs`.
+All endpoints from `http://localhost:8000/api` in dev. Frontend calls via `frontend/utils/api.js`. Interactive docs at `http://localhost:8000/docs`.
 
 ---
 
@@ -223,7 +223,7 @@ Response (with moderation warning):
 
 Real-time bidirectional communication for voice-to-voice + live video.
 
-**Connection:** `ws://localhost:8000/live/session?session_id=abc123`
+**Connection:** `ws://localhost:8000/api/live/session?session_id=abc123`
 
 **Client → Server:**
 | Type | Payload | Description |
@@ -249,7 +249,7 @@ Real-time bidirectional communication for voice-to-voice + live video.
 
 ## Utility
 
-### GET /
+### GET /api
 
 Health check — `{ "status": "ok" }`.
 

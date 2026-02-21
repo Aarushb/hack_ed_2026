@@ -2,7 +2,7 @@
 // Every network call goes through apiFetch(). Pages and components never
 // call fetch() directly. This keeps error handling and retry logic in one place.
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = 'http://localhost:8000/api';
 
 // Timeout for standard REST requests (ms)
 const REQUEST_TIMEOUT_MS = 15000;
