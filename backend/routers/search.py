@@ -8,6 +8,7 @@ POST /search/destination:
 from __future__ import annotations
 
 import logging
+from math import exp
 
 from fastapi import APIRouter, HTTPException
 
@@ -17,9 +18,31 @@ from models.schemas import (
     SearchResponse,
 )
 from services import gemini_service, places_service
+from services.geo_service import calculate_distance
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Proximity-aware ranking weight. Nearby places get a bounded boost.
+PROXIMITY_BOOST_MAX = 0.12
+PROXIMITY_DECAY_KM = 25.0
+
+
+def _combined_candidate_score(
+    candidate: PlaceCandidate,
+    user_lat: float,
+    user_lng: float,
+) -> float:
+    """Blend Gemini confidence with geographic proximity."""
+    distance_m = calculate_distance(
+        user_lat,
+        user_lng,
+        candidate.lat,
+        candidate.lng,
+    )
+    distance_km = distance_m / 1000.0
+    proximity_boost = PROXIMITY_BOOST_MAX * exp(-distance_km / PROXIMITY_DECAY_KM)
+    return candidate.confidence + proximity_boost
 
 
 @router.post("/destination", response_model=SearchResponse)
@@ -40,11 +63,17 @@ async def search_destination(request: SearchRequest) -> SearchResponse:
         HTTPException 503: If both Gemini and Places API fail.
     """
     # 1. Ask Gemini to interpret the query
-    matches = await gemini_service.search_destinations(
-        query=request.query,
-        user_lat=request.user_lat,
-        user_lng=request.user_lng,
-    )
+    try:
+        matches = await gemini_service.search_destinations(
+            query=request.query,
+            user_lat=request.user_lat,
+            user_lng=request.user_lng,
+        )
+    except gemini_service.GeminiServiceUnavailableError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Search service is temporarily unavailable. Please retry in a moment.",
+        ) from exc
 
     if not matches:
         raise HTTPException(
@@ -67,8 +96,15 @@ async def search_destination(request: SearchRequest) -> SearchResponse:
             detail="Found matches but could not resolve coordinates. Try a different query.",
         )
 
-    # Sort by confidence descending
-    candidates.sort(key=lambda c: c.confidence, reverse=True)
+    # Rank by confidence + proximity so local matches win ambiguous queries.
+    candidates.sort(
+        key=lambda c: _combined_candidate_score(
+            c,
+            request.user_lat,
+            request.user_lng,
+        ),
+        reverse=True,
+    )
 
     logger.info(
         "Search for %r returned %d candidates",
