@@ -219,7 +219,7 @@ Response (with moderation warning):
 
 ## Live Session (WebSocket — Premium tier)
 
-### WS /live/session
+### WS /api/live/session
 
 Real-time bidirectional communication for voice-to-voice + live video.
 
@@ -241,9 +241,11 @@ Real-time bidirectional communication for voice-to-voice + live video.
 | `audio` | `{data: base64}` | AI voice response audio chunk |
 | `transcript` | `{text, role}` | Transcription of speech (user or assistant) |
 | `tool_call` | `{name, status}` | Tool execution notification |
+| `tool_result` | `{name, status}` | Tool execution complete |
 | `moderation_warning` | `{message, strikes}` | Content moderation alert |
 | `error` | `{message, code}` | Error notification |
-| `connection_status` | `{status}` | Connection state updates |
+| `connection_status` | `{status}` | Connection state updates (`connected`, `reconnecting`) |
+| `turn_complete` | `{}` | Marks the end of a model turn |
 
 ---
 
