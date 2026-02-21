@@ -18,7 +18,7 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          port: YOUR_CUSTOM_PORT 
+          port: 2017
           passphrase: ${{ secrets.SERVER_SSH_PASSPHRASE }} 
           source: "frontend/*"
           target: "/home/bilbal/frontend_temp"
@@ -30,11 +30,11 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          port: YOUR_CUSTOM_PORT 
+          port: 2017
           passphrase: ${{ secrets.SERVER_SSH_PASSPHRASE }} 
-          source: "backend" # <-- Changed this to copy the whole folder
-          target: "/home/bilbal" # <-- Changed this so it creates the backend folder automatically
-          # <-- Removed strip_components entirely from this step
+          source: "backend/**"
+          target: "/home/bilbal/backend"
+          strip_components: 1
 
       - name: Deploy Frontend and Restart Backend
         uses: appleboy/ssh-action@master
@@ -42,28 +42,21 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          port: YOUR_CUSTOM_PORT 
+          port: 2017
           passphrase: ${{ secrets.SERVER_SSH_PASSPHRASE }} 
           script: |
             # --- 1. DEPLOY FRONTEND ---
-            # Create the correct Nginx path
             sudo mkdir -p /usr/share/nginx/html/inclusionmotto/northstar.inclusionmotto.com/frontend
-            
-            # Copy files from the temp folder to Nginx
             sudo cp -r /home/bilbal/frontend_temp/* /usr/share/nginx/html/inclusionmotto/northstar.inclusionmotto.com/frontend/
-            
-            # Ensure Nginx owns the files
             sudo chown -R www-data:www-data /usr/share/nginx/html/inclusionmotto/northstar.inclusionmotto.com/frontend
 
             # --- 2. DEPLOY BACKEND ---
             cd /home/bilbal/backend
             
-            # Create the venv if it doesn't exist yet
             if [ ! -d "venv" ]; then
               python3 -m venv venv
             fi
             
-            # Activate and install dependencies
             source venv/bin/activate
             pip install -r requirements.txt
             
