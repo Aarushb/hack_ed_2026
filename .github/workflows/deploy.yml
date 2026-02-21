@@ -3,7 +3,7 @@ name: Deploy Fullstack App
 on:
   push:
     branches:
-      - feat/frontend 
+      - main 
 
 jobs:
   deploy:
@@ -12,39 +12,50 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Copy Frontend Files to Server
+      - name: Copy Frontend to Temp Folder
         uses: appleboy/scp-action@master
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          port: 2017 # <-- Replace with your actual custom port
-          passphrase: ${{ secrets.SERVER_SSH_PASSPHRASE }} # <-- Unlocks your private key
+          port: YOUR_CUSTOM_PORT 
+          passphrase: ${{ secrets.SERVER_SSH_PASSPHRASE }} 
           source: "frontend/*"
-          target: "/usr/nginx/share/html/inclusionmotto/northstar.inclusionmotto.com/frontend"
+          target: "/home/bilbal/frontend_temp"
           strip_components: 1
 
-      - name: Copy Backend Files to Server
+      - name: Copy Backend to Home Directory
         uses: appleboy/scp-action@master
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          port: YOUR_CUSTOM_PORT # <-- Replace with your actual custom port
-          passphrase: ${{ secrets.SERVER_SSH_PASSPHRASE }} # <-- Unlocks your private key
+          port: YOUR_CUSTOM_PORT 
+          passphrase: ${{ secrets.SERVER_SSH_PASSPHRASE }} 
           source: "backend/*"
           target: "/home/bilbal/backend"
           strip_components: 1
 
-      - name: Restart FastAPI Backend
+      - name: Deploy Frontend and Restart Backend
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
-          port: YOUR_CUSTOM_PORT # <-- Replace with your actual custom port
-          passphrase: ${{ secrets.SERVER_SSH_PASSPHRASE }} # <-- Unlocks your private key
+          port: YOUR_CUSTOM_PORT 
+          passphrase: ${{ secrets.SERVER_SSH_PASSPHRASE }} 
           script: |
+            # --- 1. DEPLOY FRONTEND ---
+            # Create the correct Nginx path
+            sudo mkdir -p /usr/share/nginx/html/inclusionmotto/northstar.inclusionmotto.com/frontend
+            
+            # Copy files from the temp folder to Nginx
+            sudo cp -r /home/bilbal/frontend_temp/* /usr/share/nginx/html/inclusionmotto/northstar.inclusionmotto.com/frontend/
+            
+            # Ensure Nginx owns the files
+            sudo chown -R www-data:www-data /usr/share/nginx/html/inclusionmotto/northstar.inclusionmotto.com/frontend
+
+            # --- 2. DEPLOY BACKEND ---
             cd /home/bilbal/backend
             
             # Create the venv if it doesn't exist yet
@@ -56,5 +67,5 @@ jobs:
             source venv/bin/activate
             pip install -r requirements.txt
             
-            # Restart the service
+            # --- 3. RESTART SERVICE ---
             sudo systemctl restart northstar-backend.service || true
