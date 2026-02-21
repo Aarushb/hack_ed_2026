@@ -18,6 +18,8 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
+          port: 2017 # <-- Replace with your actual custom port
+          passphrase: ${{ secrets.SERVER_SSH_PASSPHRASE }} # <-- Unlocks your private key
           source: "frontend/*"
           target: "/usr/nginx/share/html/inclusionmotto/northstar.inclusionmotto.com/frontend"
           strip_components: 1
@@ -28,6 +30,8 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
+          port: YOUR_CUSTOM_PORT # <-- Replace with your actual custom port
+          passphrase: ${{ secrets.SERVER_SSH_PASSPHRASE }} # <-- Unlocks your private key
           source: "backend/*"
           target: "/home/bilbal/backend"
           strip_components: 1
@@ -38,6 +42,8 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
+          port: YOUR_CUSTOM_PORT # <-- Replace with your actual custom port
+          passphrase: ${{ secrets.SERVER_SSH_PASSPHRASE }} # <-- Unlocks your private key
           script: |
             cd /home/bilbal/backend
             
@@ -50,5 +56,5 @@ jobs:
             source venv/bin/activate
             pip install -r requirements.txt
             
-            # Restart the service (This will fail on the very first run, which is fine!)
+            # Restart the service
             sudo systemctl restart northstar-backend.service || true
