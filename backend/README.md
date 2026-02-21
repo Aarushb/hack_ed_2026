@@ -23,3 +23,5 @@ uvicorn main:app --reload
 ```
 
 API docs auto-generated at: http://localhost:8000/docs
+
+API base path: http://localhost:8000/api
