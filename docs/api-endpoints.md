@@ -6,7 +6,7 @@ All endpoints from `http://localhost:8000/api` in dev. Frontend calls via `front
 
 ## Search & Session Setup
 
-### POST /search/destination
+### POST /api/search/destination
 
 Takes a natural-language query and user's current GPS coordinates. Gemini interprets the query geographically, returns ranked candidates, each resolved to real coordinates via Places API.
 
@@ -37,7 +37,7 @@ Response:
 
 ---
 
-### POST /session/start
+### POST /api/session/start
 
 Starts a session after the user picks a destination. Triggers auto-generation of waypoints via Directions API.
 
@@ -67,7 +67,7 @@ Response:
 
 ---
 
-### POST /session/describe
+### POST /api/session/describe
 
 Generates the accessible route overview once per session, before walking.
 
@@ -88,7 +88,7 @@ Response:
 
 ---
 
-### POST /session/resume
+### POST /api/session/resume
 
 Called on page reload if localStorage has a saved session.
 
@@ -113,7 +113,7 @@ Response:
 
 ## Active Session
 
-### POST /session/update
+### POST /api/session/update
 
 Main game loop. Called every ~2 seconds with user's GPS position.
 
@@ -142,7 +142,7 @@ Response:
 
 ---
 
-### POST /session/next
+### POST /api/session/next
 
 Advances to the next waypoint after trigger.
 
@@ -163,7 +163,7 @@ Response:
 
 ---
 
-### GET /session/{session_id}
+### GET /api/session/{session_id}
 
 Current session state. For debugging and resume verification.
 
@@ -171,7 +171,7 @@ Current session state. For debugging and resume verification.
 
 ## AI Assistant (REST — Basic/Standard tier fallback)
 
-### POST /assistant/message
+### POST /api/assistant/message
 
 Text-based assistant with optional image. Used by Basic and Standard tiers, or as fallback when WebSocket is unavailable.
 
