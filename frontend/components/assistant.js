@@ -358,7 +358,7 @@ function connectLiveSession(sessionId) {
   }
 
   _liveWs.onopen = () => {
-    renderAssistantMessage('system', '🔴 Live session connected.');
+    // Server will emit a `connection_status` message; avoid duplicate UI.
   };
 
   _liveWs.onmessage = (event) => {
