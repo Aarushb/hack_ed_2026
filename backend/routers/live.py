@@ -238,6 +238,10 @@ async def _client_receive_loop(
                     nav_session.last_user_lat = lat
                     nav_session.last_user_lng = lng
 
+            elif msg_type == "ping":
+                # Keepalive ping from client — acknowledge but no action needed.
+                pass
+
             else:
                 logger.debug("Unknown message type: %s", msg_type)
 

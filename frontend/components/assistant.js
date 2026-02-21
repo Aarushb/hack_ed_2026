@@ -18,6 +18,7 @@ let _liveWs = null;        // WebSocket for Premium live session
 let _reconnectTimer = null;
 let _reconnectAttempt = 0;
 let _lastLiveSessionId = null;
+let _keepaliveTimer = null;
 
 // Mic capture (PCM)
 let _micStream = null;
@@ -65,66 +66,94 @@ function mountAssistant(parent) {
   _panelEl.className = 'assistant-panel';
   _panelEl.setAttribute('role', 'dialog');
   _panelEl.setAttribute('aria-label', 'AI Assistant');
+
+  // Determine if this is Premium (live voice-to-voice, no text input).
+  const isPremium = state?.tier === 'premium';
+
   _panelEl.innerHTML = `
     <div class="assistant-header">
       <h3>🧭 NorthStar</h3>
       <button class="btn btn-icon btn-secondary" aria-label="Close assistant">✕</button>
     </div>
     <div class="assistant-messages" aria-live="polite" aria-label="Conversation"></div>
-    <div class="assistant-input-bar">
-      <input type="text" placeholder="Ask NorthStar anything…"
-             aria-label="Message input" autocomplete="off" />
+    <div class="assistant-input-bar${isPremium ? ' premium-voice-mode' : ''}">
+      ${isPremium ? '' : '<input type="text" placeholder="Ask NorthStar anything…" aria-label="Message input" autocomplete="off" />'}
       <button class="btn btn-icon btn-secondary" aria-label="Camera" title="Camera">📷</button>
       ${isVoiceInputSupported() ? '<button class="btn btn-icon btn-secondary" aria-label="Voice" title="Voice">🎤</button>' : ''}
-      <button class="btn btn-icon btn-primary" aria-label="Send message" title="Send">➤</button>
+      ${isPremium ? '' : '<button class="btn btn-icon btn-primary" aria-label="Send message" title="Send">➤</button>'}
     </div>
   `;
 
   // Cache DOM references
   _messagesEl = _panelEl.querySelector('.assistant-messages');
-  _inputEl = _panelEl.querySelector('.assistant-input-bar input');
+  _inputEl = _panelEl.querySelector('.assistant-input-bar input'); // null for Premium
 
   // Wire up header close button
   _panelEl.querySelector('.assistant-header button').addEventListener('click', closeAssistant);
 
   // Wire up input bar buttons
   const buttons = _panelEl.querySelectorAll('.assistant-input-bar button');
-  const cameraBtn = buttons[0]; // 📷
-  const sendBtn = buttons[buttons.length - 1]; // ➤ (always last)
-  const micBtn = buttons.length === 3 ? buttons[1] : null; // 🎤 (only if voice supported)
 
-  cameraBtn.addEventListener('click', _handleCameraToggle);
-  sendBtn.addEventListener('click', _handleSend);
-  if (micBtn) micBtn.addEventListener('click', _handleVoiceToggle);
+  if (isPremium) {
+    // Premium: only camera (📷) and mic (🎤) buttons, no text input or send.
+    const cameraBtn = buttons[0];
+    const micBtn = buttons.length >= 2 ? buttons[1] : null;
+    cameraBtn.addEventListener('click', _handleCameraToggle);
+    if (micBtn) micBtn.addEventListener('click', _handleVoiceToggle);
+  } else {
+    // Basic/Standard: camera, mic (optional), send button, plus text input.
+    const cameraBtn = buttons[0]; // 📷
+    const sendBtn = buttons[buttons.length - 1]; // ➤ (always last)
+    const micBtn = buttons.length === 3 ? buttons[1] : null; // 🎤 (only if voice supported)
 
-  // Send on Enter key
-  _inputEl.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      _handleSend();
-    }
-  });
+    cameraBtn.addEventListener('click', _handleCameraToggle);
+    sendBtn.addEventListener('click', _handleSend);
+    if (micBtn) micBtn.addEventListener('click', _handleVoiceToggle);
+
+    // Send on Enter key
+    _inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        _handleSend();
+      }
+    });
+  }
 
   parent.appendChild(_panelEl);
 
-  // If we're on Premium and a live WS is already connected, encourage voice mode.
-  if (state?.tier === 'premium') {
+  // If we're on Premium, set expectation for pure voice-to-voice mode.
+  if (isPremium) {
     renderAssistantMessage(
       'system',
-      'Voice-to-voice is available. Tap 🎤 to start speaking.'
+      'Live voice mode active. Mic will auto-start when you open the assistant.'
     );
   }
 }
 
 /**
  * Open the assistant panel with slide-up animation.
+ * For Premium tier, auto-starts mic for live voice-to-voice.
  */
 function openAssistant() {
   if (!_panelEl) return;
   _isOpen = true;
   _panelEl.classList.add('open');
   _overlayEl.classList.add('open');
-  _inputEl.focus();
+
+  // Premium: auto-start live mic for pure voice-to-voice experience.
+  if (state?.tier === 'premium') {
+    // Small delay to ensure WS is ready and panel animation starts.
+    setTimeout(() => {
+      if (_isOpen && !_micActive && _liveWs && _liveWs.readyState === WebSocket.OPEN) {
+        _startLiveMic();
+      } else if (_isOpen && !_micActive) {
+        // WS not ready yet — prompt user to tap mic manually.
+        renderAssistantMessage('system', 'Tap 🎤 to start speaking.');
+      }
+    }, 300);
+  } else {
+    _inputEl?.focus();
+  }
 }
 
 /**
@@ -399,12 +428,23 @@ function _stopVoiceInput() {
 function _updateMicButton(active) {
   if (!_panelEl) return;
   const buttons = _panelEl.querySelectorAll('.assistant-input-bar button');
-  // Mic button is second if voice is supported (camera=0, mic=1, send=2)
-  if (buttons.length === 3) {
-    buttons[1].textContent = active ? '⏹️' : '🎤';
-    buttons[1].setAttribute(
+  const isPremium = state?.tier === 'premium';
+
+  // Find the mic button based on tier layout:
+  // - Premium: camera=0, mic=1 (2 buttons total)
+  // - Basic/Standard: camera=0, mic=1 (if voice supported), send=last (2-3 buttons)
+  let micBtn = null;
+  if (isPremium && buttons.length === 2) {
+    micBtn = buttons[1]; // Premium: camera, mic
+  } else if (buttons.length === 3) {
+    micBtn = buttons[1]; // Standard with voice: camera, mic, send
+  }
+
+  if (micBtn) {
+    micBtn.textContent = active ? '⏹️' : '🎤';
+    micBtn.setAttribute(
       'aria-label',
-      state?.tier === 'premium'
+      isPremium
         ? (active ? 'Stop microphone' : 'Start microphone')
         : (active ? 'Stop listening' : 'Voice input')
     );
@@ -444,6 +484,8 @@ function connectLiveSession(sessionId) {
     if (_cameraActive) {
       try { _liveWs.send(JSON.stringify({ type: 'camera_on' })); } catch (_) {}
     }
+    // Start keepalive ping to prevent idle timeouts (e.g., Render free tier).
+    _startKeepalive();
   };
 
   _liveWs.onmessage = (event) => {
@@ -549,6 +591,7 @@ function sendLiveLocation(lat, lng) {
  */
 function _disconnectLiveSession() {
   _clearReconnect();
+  _stopKeepalive();
   if (_liveWs) {
     _liveWs.onclose = null; // prevent reconnect logic on intentional close
     _liveWs.close();
@@ -560,6 +603,27 @@ function _clearReconnect() {
   if (_reconnectTimer) {
     clearTimeout(_reconnectTimer);
     _reconnectTimer = null;
+  }
+}
+
+function _startKeepalive() {
+  _stopKeepalive();
+  // Send a ping every 25s to keep the connection alive (Render times out at 30s idle).
+  _keepaliveTimer = setInterval(() => {
+    if (_liveWs && _liveWs.readyState === WebSocket.OPEN) {
+      try {
+        _liveWs.send(JSON.stringify({ type: 'ping' }));
+      } catch (_) {
+        // Ignore send failures — onclose will handle reconnect.
+      }
+    }
+  }, 25000);
+}
+
+function _stopKeepalive() {
+  if (_keepaliveTimer) {
+    clearInterval(_keepaliveTimer);
+    _keepaliveTimer = null;
   }
 }
 

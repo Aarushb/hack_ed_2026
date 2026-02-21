@@ -528,6 +528,18 @@ label {
   flex-shrink: 0;
 }
 
+/* Premium voice-only mode — center the mic/camera buttons */
+.assistant-input-bar.premium-voice-mode {
+  justify-content: center;
+  gap: var(--space-lg);
+}
+
+.assistant-input-bar.premium-voice-mode button {
+  min-width: 56px;
+  min-height: 56px;
+  font-size: 1.5rem;
+}
+
 .assistant-input-bar input {
   flex: 1;
   min-height: 44px;
