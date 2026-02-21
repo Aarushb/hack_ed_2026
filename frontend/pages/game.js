@@ -1,6 +1,6 @@
 // game.js - active navigation
 function renderGame(root) {
-    root.innerHTML = '
+    root.innerHTML = `
         <main class="game-page">
             <h1>Active Navigation</h1>
             
@@ -23,7 +23,7 @@ function renderGame(root) {
                 <button id="complete-route-btn" type="button">End Route</button>
             </div>
         </main>
-      ';
+      `;
     
     initMap("map");
 
@@ -62,7 +62,7 @@ function renderGame(root) {
             }
 
             if (updateRes.triggered && updateRes.next_waypoint) {
-                document.getElementById("clue-card'host").innerHTML = "";
+                document.getElementById("clue-card-host").innerHTML = "";
                 document.getElementById("clue-card-host").appendChild(createClueCard(updateRes.next_waypoint));
             }
 
@@ -71,7 +71,7 @@ function renderGame(root) {
                 navigateTo((el) => renderComplete(el));
             }
         } catch (err) {
-            document.getElementById("last-narration").textContent = 'Update error: ${err.message}';
+            document.getElementById("last-narration").textContent = `Update error: ${err.message}`;
         }
     });
-}
+} 
