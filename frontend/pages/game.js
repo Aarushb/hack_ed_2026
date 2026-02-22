@@ -49,7 +49,7 @@ function renderGame(container) {
         🧭
       </button>
     </div>
-    <button class="btn btn-danger" id="end-nav" aria-label="End navigation" style="position:fixed; top:12px; right:12px; z-index:99; font-weight:bold; padding:8px 16px;">
+    <button class="btn btn-danger" id="end-nav" aria-label="End navigation" style="position:fixed; top:12px; right:12px; z-index:1102; font-weight:bold; padding:8px 16px;">
       End
     </button>
   `;
@@ -74,12 +74,14 @@ function renderGame(container) {
     }
   });
 
-  document.getElementById('end-nav').addEventListener('click', () => {
-    _teardownGame();
-    clearSession();
-    resetState();
-    navigateTo((el) => renderHome(el, null));
-  });
+  const endBtn = document.getElementById('end-nav');
+  if (endBtn) {
+    endBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      _exitNavigation();
+    });
+  }
 
   // ── Initialise systems (must be called from user gesture context) ────
   _initGameSystems();
@@ -300,6 +302,18 @@ function _clearGameError() {
   if (el) el.innerHTML = '';
 }
 
+function _exitNavigation() {
+  try {
+    _teardownGame();
+  } catch (err) {
+    console.error('[game] End action teardown failed:', err);
+  }
+
+  try { clearSession(); } catch (_) {}
+  try { resetState(); } catch (_) {}
+  navigateTo((el) => renderHome(el, null));
+}
+
 // ── Cleanup ───────────────────────────────────────────────────────────────
 
 /**
@@ -307,26 +321,50 @@ function _clearGameError() {
  */
 function _teardownGame() {
   // Stop GPS tracking
-  if (_geoWatchId != null) {
-    stopWatching(_geoWatchId);
-    _geoWatchId = null;
+  try {
+    if (_geoWatchId != null) {
+      stopWatching(_geoWatchId);
+      _geoWatchId = null;
+    }
+  } catch (err) {
+    console.warn('[game] Failed to stop geolocation watch:', err);
   }
 
   // Stop audio
-  stopAudio();
-  destroyAudio();
+  try {
+    stopAudio();
+    destroyAudio();
+  } catch (err) {
+    console.warn('[game] Failed to stop audio subsystem:', err);
+  }
 
   // Stop compass
-  stopCompass();
+  try {
+    stopCompass();
+  } catch (err) {
+    console.warn('[game] Failed to stop compass:', err);
+  }
 
   // Stop TTS
-  stopSpeaking();
+  try {
+    stopSpeaking();
+  } catch (err) {
+    console.warn('[game] Failed to stop speech synthesis:', err);
+  }
 
   // Unmount assistant (also disconnects live WebSocket)
-  unmountAssistant();
+  try {
+    unmountAssistant();
+  } catch (err) {
+    console.warn('[game] Failed to unmount assistant:', err);
+  }
 
   // Destroy map
-  destroyMap();
+  try {
+    destroyMap();
+  } catch (err) {
+    console.warn('[game] Failed to destroy map:', err);
+  }
 
   _isProcessingUpdate = false;
 }
