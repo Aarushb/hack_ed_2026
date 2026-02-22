@@ -203,7 +203,11 @@ class LiveSession:
         """
         try:
             return types.AudioTranscriptionConfig(language_code=LIVE_TRANSCRIPTION_LANGUAGE)
-        except TypeError:
+        except Exception:
+            logger.debug(
+                "AudioTranscriptionConfig(language_code=...) unsupported by current SDK; "
+                "falling back to default transcription config."
+            )
             return types.AudioTranscriptionConfig()
 
     async def connect(self) -> None:
