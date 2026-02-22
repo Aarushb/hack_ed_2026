@@ -56,7 +56,7 @@ class Waypoint(BaseModel):
     lat: float
     lng: float
     trigger_radius_meters: float = 15.0
-    audio_file: str = "chime_ambient.mp3"
+    audio_file: Optional[str] = None
     landmark_hint: str = ""
 
 

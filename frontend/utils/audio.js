@@ -6,6 +6,7 @@
 let audioCtx = null;
 let activeNodes = null;   // { source, panner, gain }
 const bufferCache = {};   // waypointId → AudioBuffer
+const failedAudioFiles = new Set(); // audio_file → true when fetch/decode failed
 
 // Synthesised arrival chime buffer (created once on first use)
 let _arrivalChimeBuffer = null;
@@ -46,10 +47,15 @@ async function preloadBuffers(waypoints) {
   for (const wp of waypoints) {
     if (bufferCache[wp.id]) continue; // already cached
 
+    if (wp.audio_file && failedAudioFiles.has(wp.audio_file)) {
+      continue;
+    }
+
     try {
       const res = await fetch(`${API_BASE}/static/audio/${wp.audio_file}`);
       if (!res.ok) {
         console.warn(`[audio] Failed to fetch audio for waypoint ${wp.id}: HTTP ${res.status}`);
+        if (wp.audio_file) failedAudioFiles.add(wp.audio_file);
         continue;
       }
       const raw = await res.arrayBuffer();
@@ -57,6 +63,7 @@ async function preloadBuffers(waypoints) {
     } catch (err) {
       // Non-fatal — spatial audio for this waypoint simply won't play
       console.warn(`[audio] Could not decode audio for waypoint ${wp.id}:`, err.message);
+      if (wp.audio_file) failedAudioFiles.add(wp.audio_file);
     }
   }
 }

@@ -26,9 +26,11 @@ let _micCtx = null;
 let _micSource = null;
 let _micProcessor = null; // ScriptProcessorNode fallback
 let _micWorkletNode = null;
+let _micSilentGain = null;
 let _micActive = false;
 let _lastSilenceSentAt = 0;
 let _micInputSampleRate = LIVE_AUDIO_SAMPLE_RATE;
+let _sentAnyMicAudio = false;
 
 // Live audio playback (PCM)
 let _playbackTime = 0;
@@ -40,6 +42,7 @@ let _camVideoEl = null;
 let _camCanvas = null;
 let _camTimer = null;
 let _cameraActive = false;
+let _sentAnyVideoFrame = false;
 
 const LIVE_AUDIO_SAMPLE_RATE = 16000;
 const LIVE_AUDIO_CHUNK_MS = 80; // target chunk size (worklet may produce smaller)
@@ -676,6 +679,7 @@ async function _startLiveMic() {
   }
 
   _micActive = true;
+  _sentAnyMicAudio = false;
   _updateMicButton(true);
   renderAssistantMessage('system', '🎙️ Microphone on. Speak normally.');
 
@@ -733,12 +737,17 @@ async function _startLiveMic() {
 
       _micWorkletNode = new AudioWorkletNode(_micCtx, 'pcm-capture');
       _micWorkletNode.port.onmessage = (e) => {
-        const floats = new Float32Array(e.data);
+        const floats = (e.data instanceof ArrayBuffer) ? new Float32Array(e.data) : new Float32Array(e.data);
         _sendPcmFloats(floats);
       };
 
       _micSource.connect(_micWorkletNode);
-      // Don't route to destination to avoid echo.
+      // Keep the worklet connected so it runs reliably across browsers.
+      // Route through a silent gain node to avoid echo.
+      _micSilentGain = _micCtx.createGain();
+      _micSilentGain.gain.value = 0;
+      _micWorkletNode.connect(_micSilentGain);
+      _micSilentGain.connect(_micCtx.destination);
       return;
     } catch (err) {
       console.warn('[assistant] AudioWorklet failed, falling back:', err.message);
@@ -771,10 +780,12 @@ function _stopLiveMic() {
   renderAssistantMessage('system', 'Microphone off.');
 
   try { _micWorkletNode?.disconnect(); } catch (_) {}
+  try { _micSilentGain?.disconnect(); } catch (_) {}
   try { _micProcessor?.disconnect(); } catch (_) {}
   try { _micSource?.disconnect(); } catch (_) {}
 
   _micWorkletNode = null;
+  _micSilentGain = null;
   _micProcessor = null;
   _micSource = null;
 
@@ -819,6 +830,10 @@ function _sendPcmFloats(float32) {
   const b64 = _arrayBufferToBase64(pcm16.buffer);
   try {
     _liveWs.send(JSON.stringify({ type: 'audio', data: b64 }));
+    if (!_sentAnyMicAudio) {
+      _sentAnyMicAudio = true;
+      renderAssistantMessage('system', 'Streaming microphone audio…');
+    }
   } catch (_) {
     // ignore send failures
   }
@@ -864,6 +879,7 @@ async function _startLiveCamera() {
   }
 
   _cameraActive = true;
+  _sentAnyVideoFrame = false;
   renderAssistantMessage('system', '📷 Camera on. Streaming to NorthStar.');
 
   try { _liveWs.send(JSON.stringify({ type: 'camera_on' })); } catch (_) {}
@@ -933,6 +949,10 @@ function _sendVideoFrame() {
 
   try {
     _liveWs.send(JSON.stringify({ type: 'video_frame', data: base64 }));
+    if (!_sentAnyVideoFrame) {
+      _sentAnyVideoFrame = true;
+      renderAssistantMessage('system', 'Streaming camera frames…');
+    }
   } catch (_) {
     // ignore send failures
   }

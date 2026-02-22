@@ -33,8 +33,25 @@ function initMap(containerId, center) {
   if (!container) return false;
 
   if (!isMapsAvailable()) {
+    // The Maps script may still be loading asynchronously.
     container.classList.add('map-unavailable');
-    container.textContent = 'Map unavailable — add a Google Maps API key to enable.';
+    container.textContent = 'Loading map…';
+
+    let attempts = 0;
+    const maxAttempts = 20; // ~5s at 250ms
+    const timer = setInterval(() => {
+      attempts += 1;
+      if (isMapsAvailable()) {
+        clearInterval(timer);
+        container.classList.remove('map-unavailable');
+        container.textContent = '';
+        initMap(containerId, center);
+      } else if (attempts >= maxAttempts) {
+        clearInterval(timer);
+        container.textContent = 'Map unavailable — add a Google Maps API key to enable.';
+      }
+    }, 250);
+
     return false;
   }
 
