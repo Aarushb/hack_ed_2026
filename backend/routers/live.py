@@ -211,6 +211,9 @@ async def _client_receive_loop(
                         )
                     await live.send_audio(audio_data)
 
+            elif msg_type == "audio_stream_end":
+                await live.send_audio_stream_end()
+
             elif msg_type == "video_frame":
                 # Only process if camera is active
                 if live.camera_active:

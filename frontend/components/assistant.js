@@ -33,9 +33,10 @@ let _micSilentGain = null;
 let _micActive = false;
 let _micStarting = false;
 let _micStartToken = 0;
-let _lastSilenceSentAt = 0;
 let _micInputSampleRate = 16000;
 let _sentAnyMicAudio = false;
+let _micLastVoiceAt = 0;
+let _sentAudioStreamEndForSilence = false;
 let _gotUserTranscriptInCurrentMicSession = false;
 let _liveFallbackRecognition = null;
 let _liveFallbackTimer = null;
@@ -60,6 +61,8 @@ const LIVE_VIDEO_FPS = 2;
 const LIVE_VIDEO_MAX_WIDTH = 360;
 const LIVE_WS_MAX_BUFFERED_BYTES = 768 * 1024; // throttle when WS buffer is large
 const LIVE_TRANSCRIPT_FALLBACK_DELAY_MS = 7000;
+const LIVE_AUDIO_SILENCE_RMS_THRESHOLD = 0.0003;
+const LIVE_AUDIO_END_AFTER_SILENCE_MS = 900;
 
 // ── Public API ────────────────────────────────────────────────────────────
 
@@ -812,6 +815,15 @@ function _stopLiveSpeechFallback() {
   }
 }
 
+function _sendLiveAudioStreamEnd() {
+  if (!_liveWs || _liveWs.readyState !== WebSocket.OPEN) return;
+  try {
+    _liveWs.send(JSON.stringify({ type: 'audio_stream_end' }));
+  } catch (_) {
+    // Ignore transient send failures.
+  }
+}
+
 async function _startLiveMic() {
   if (_micActive || _micStarting) return;
   if (!_liveWs || _liveWs.readyState !== WebSocket.OPEN) {
@@ -850,6 +862,8 @@ async function _startLiveMic() {
 
   _micActive = true;
   _sentAnyMicAudio = false;
+  _micLastVoiceAt = 0;
+  _sentAudioStreamEndForSilence = false;
   _gotUserTranscriptInCurrentMicSession = false;
   _stopLiveSpeechFallback();
   _scheduleLiveSpeechFallback();
@@ -961,6 +975,9 @@ function _stopLiveMic() {
   _clearLiveFallbackTimer();
   _stopLiveSpeechFallback();
   _gotUserTranscriptInCurrentMicSession = false;
+  _sendLiveAudioStreamEnd();
+  _micLastVoiceAt = 0;
+  _sentAudioStreamEndForSilence = false;
   if (!_micActive && !_micStream && !_micCtx) {
     _updateMicButton(false);
     return;
@@ -1006,11 +1023,20 @@ function _sendPcmFloats(float32) {
   }
   const rms = Math.sqrt(sumSq / Math.max(1, audio.length));
   const now = Date.now();
-  // Keep the gate conservative; some phone mics capture very low amplitude.
-  if (rms < 0.0003) {
-    if (now - _lastSilenceSentAt < 500) return;
-    _lastSilenceSentAt = now;
+  // Avoid streaming silence; finalize the current voice turn after pause.
+  if (rms < LIVE_AUDIO_SILENCE_RMS_THRESHOLD) {
+    if (
+      _micLastVoiceAt &&
+      !_sentAudioStreamEndForSilence &&
+      (now - _micLastVoiceAt) >= LIVE_AUDIO_END_AFTER_SILENCE_MS
+    ) {
+      _sendLiveAudioStreamEnd();
+      _sentAudioStreamEndForSilence = true;
+    }
+    return;
   }
+  _micLastVoiceAt = now;
+  _sentAudioStreamEndForSilence = false;
 
   const pcm16 = new Int16Array(audio.length);
   for (let i = 0; i < audio.length; i++) {

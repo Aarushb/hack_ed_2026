@@ -252,6 +252,24 @@ class LiveSession:
         except Exception as e:
             logger.exception("Error sending audio to Gemini: %s", e)
 
+    async def send_audio_stream_end(self) -> None:
+        """Signal end-of-audio for the current speech segment.
+
+        This helps the Live model finalize turn detection when the user
+        pauses speaking.
+        """
+        if self._session is None:
+            return
+
+        try:
+            await self._session.send_realtime_input(audio_stream_end=True)
+        except TypeError:
+            # Backward-compatible fallback for SDK variants that do not
+            # accept audio_stream_end.
+            logger.debug("Live SDK does not support audio_stream_end on this version")
+        except Exception as e:
+            logger.exception("Error sending audio_stream_end to Gemini: %s", e)
+
     async def send_video_frame(self, frame_base64: str) -> None:
         """Send a video frame (JPEG) to Gemini.
 
@@ -284,8 +302,11 @@ class LiveSession:
         """
         if self._session is None:
             return
-
-        await self._session.send(input=text, end_of_turn=True)
+        try:
+            await self._session.send(input=text, end_of_turn=True)
+        except TypeError:
+            # Some SDK versions removed end_of_turn from send().
+            await self._session.send(input=text)
 
     async def receive_responses(self):
         """Async generator that yields responses from Gemini.
