@@ -39,19 +39,19 @@ function renderGame(container) {
       </div>
 
       <div id="clue-card-container" aria-live="assertive"></div>
-
-      <div class="game-actions">
-        <button class="btn btn-primary" id="assistant-toggle" aria-label="Open AI assistant">
-          🧭 Ask NorthStar
-        </button>
-        <button class="btn btn-secondary" id="repeat-narration" aria-label="Repeat last narration">
-          🔊 Repeat
-        </button>
-        <button class="btn btn-danger" id="end-nav" aria-label="End navigation">
-          End
-        </button>
-      </div>
     </div>
+    
+    <div class="fab-container">
+      <button class="btn btn-fab btn-fab-secondary" id="repeat-narration" aria-label="Repeat last narration" title="Repeat last instruction">
+        🔊
+      </button>
+      <button class="btn btn-fab btn-fab-primary" id="assistant-toggle" aria-label="Open AI assistant" title="NorthStar Assistant">
+        🧭
+      </button>
+    </div>
+    <button class="btn btn-danger" id="end-nav" aria-label="End navigation" style="position:fixed; top:12px; right:12px; z-index:99; font-weight:bold; padding:8px 16px;">
+      End
+    </button>
   `;
   container.appendChild(layout);
 
@@ -132,7 +132,7 @@ async function _initGameSystems() {
     (err) => _showGameError(err.message),
   );
 
-  // 7. Connect live WebSocket for Premium tier
+  // 7. Connect live WebSocket for Premium tier (restore initial connection)
   if (state.tier === 'premium' && state.sessionId) {
     connectLiveSession(state.sessionId);
   }

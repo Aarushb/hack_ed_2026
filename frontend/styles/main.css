@@ -451,18 +451,17 @@ label {
   position: fixed;
   bottom: 0;
   left: 0;
-  right: 0;
-  max-width: var(--max-width);
-  margin: 0 auto;
+  width: 100%;
+  height: 85vh; /* Taller panel */
   background: var(--color-surface);
-  border-top: 1px solid var(--color-border);
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-  z-index: 101;
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.4);
+  z-index: 1001;
   transform: translateY(100%);
-  transition: transform 0.3s ease;
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
   display: flex;
   flex-direction: column;
-  max-height: 80dvh;
 }
 
 .assistant-panel.open {
@@ -470,16 +469,34 @@ label {
 }
 
 .assistant-header {
+  padding: var(--space-md);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-md);
   border-bottom: 1px solid var(--color-border);
-  flex-shrink: 0;
 }
 
 .assistant-header h3 {
   margin: 0;
+  font-size: var(--font-size-lg);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.live-indicator {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  background-color: var(--color-danger);
+  border-radius: 50%;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.2); }
+  100% { opacity: 1; transform: scale(1); }
 }
 
 .assistant-messages {
@@ -488,61 +505,89 @@ label {
   padding: var(--space-md);
   display: flex;
   flex-direction: column;
-  gap: var(--space-sm);
+  gap: var(--space-md);
 }
 
 .assistant-msg {
-  max-width: 85%;
   padding: var(--space-sm) var(--space-md);
-  border-radius: var(--radius-lg);
-  font-size: var(--font-size-base);
-  line-height: 1.5;
-  animation: slideUp 0.2s ease;
+  border-radius: 18px;
+  max-width: 85%;
+  line-height: 1.4;
+  word-wrap: break-word;
 }
 
 .assistant-msg.user {
   align-self: flex-end;
   background: var(--color-accent);
   color: var(--color-bg);
+  border-bottom-right-radius: 4px;
 }
 
 .assistant-msg.assistant {
   align-self: flex-start;
-  background: var(--color-surface-raised);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
   color: var(--color-text);
+  border-bottom-left-radius: 4px;
 }
 
 .assistant-msg.system {
   align-self: center;
-  background: transparent;
-  color: var(--color-warning);
   font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  background: transparent;
+  border: none;
+  text-align: center;
   font-style: italic;
 }
 
-.assistant-input-bar {
-  display: flex;
-  gap: var(--space-sm);
-  padding: var(--space-md);
+/* Premium Voice Mode Controls */
+.assistant-controls-premium {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  background: var(--color-bg); /* Contrast with panel surface */
   border-top: 1px solid var(--color-border);
-  flex-shrink: 0;
 }
 
-/* Premium voice-only mode — center the mic/camera buttons */
-.assistant-input-bar.premium-voice-mode {
+.btn-control-large {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
-  gap: var(--space-lg);
+  padding: var(--space-md);
+  height: 96px;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
 
-.assistant-input-bar.premium-voice-mode button {
-  min-width: 56px;
-  min-height: 56px;
-  font-size: 1.5rem;
+.btn-control-large .icon {
+  font-size: 32px;
+  margin-bottom: var(--space-xs);
 }
 
-.assistant-input-bar input {
-  flex: 1;
-  min-height: 44px;
+.btn-control-large .label {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.btn-control-large.active {
+  background: var(--color-accent);
+  color: var(--color-bg);
+  border-color: var(--color-accent);
+}
+
+.btn-control-large.active .label {
+  color: var(--color-bg);
+}
+
+/* Hide standard input bar in premium mode if we use the large controls */
+.assistant-input-bar.hidden {
+  display: none;
 }
 
 /* ── Loading states ────────────────────────────────────────────────────── */
@@ -768,4 +813,45 @@ label {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* ── Floating Action Button (FAB) ── */
+
+.fab-container {
+  position: fixed;
+  bottom: var(--space-lg);
+  right: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  z-index: 100;
+}
+
+.btn-fab {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.btn-fab:active {
+  transform: scale(0.95);
+}
+
+.btn-fab-primary {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+
+.btn-fab-secondary {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
 }

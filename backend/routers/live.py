@@ -194,6 +194,12 @@ async def _client_receive_loop(
                 audio_data = msg.get("data", "")
                 if audio_data:
                     audio_chunks += 1
+                    if audio_chunks == 1:
+                        logger.info(
+                            "Live WS %s: received first audio chunk (b64_len=%s)",
+                            live.session_id,
+                            len(audio_data),
+                        )
                     now = time.monotonic()
                     if audio_chunks % 50 == 0 or (now - last_log) > 10:
                         last_log = now
@@ -211,6 +217,12 @@ async def _client_receive_loop(
                     frame_data = msg.get("data", "")
                     if frame_data:
                         video_frames += 1
+                        if video_frames == 1:
+                            logger.info(
+                                "Live WS %s: received first video frame (b64_len=%s)",
+                                live.session_id,
+                                len(frame_data),
+                            )
                         if video_frames % 10 == 0:
                             logger.info(
                                 "Live WS %s: received video frames=%s (latest b64_len=%s)",
@@ -281,7 +293,7 @@ async def _client_receive_loop(
             elif msg_type == "ping":
                 # Keepalive ping from client — acknowledge but no action needed.
                 pings += 1
-                if pings % 5 == 0:
+                if pings == 1 or pings % 5 == 0:
                     logger.info("Live WS %s: received pings=%s", live.session_id, pings)
                 try:
                     await websocket.send_json({"type": "pong"})
