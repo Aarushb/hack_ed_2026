@@ -805,7 +805,8 @@ function _sendPcmFloats(float32) {
   }
   const rms = Math.sqrt(sumSq / Math.max(1, audio.length));
   const now = Date.now();
-  if (rms < 0.002) {
+  // Keep the gate conservative; some phone mics capture very low amplitude.
+  if (rms < 0.0003) {
     if (now - _lastSilenceSentAt < 500) return;
     _lastSilenceSentAt = now;
   }

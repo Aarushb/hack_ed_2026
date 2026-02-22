@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -115,6 +116,18 @@ async def live_session_ws(websocket: WebSocket) -> None:
             return_when=asyncio.FIRST_COMPLETED,
         )
 
+        # Ensure exceptions from completed tasks are retrieved (prevents noisy
+        # "Task exception was never retrieved" logs on abnormal WS closes).
+        for task in done:
+            try:
+                await task
+            except WebSocketDisconnect:
+                pass
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception("Live session task failed for %s", session_id)
+
         # Cancel the other task
         for task in pending:
             task.cancel()
@@ -157,6 +170,10 @@ async def _client_receive_loop(
         live: The active Gemini Live session.
         nav_session: The navigation session for moderation checks.
     """
+    audio_chunks = 0
+    video_frames = 0
+    last_log = time.monotonic()
+
     try:
         while True:
             raw = await websocket.receive_text()
@@ -175,6 +192,16 @@ async def _client_receive_loop(
             if msg_type == "audio":
                 audio_data = msg.get("data", "")
                 if audio_data:
+                    audio_chunks += 1
+                    now = time.monotonic()
+                    if audio_chunks % 50 == 0 or (now - last_log) > 10:
+                        last_log = now
+                        logger.info(
+                            "Live WS %s: received audio chunks=%s (latest b64_len=%s)",
+                            live.session_id,
+                            audio_chunks,
+                            len(audio_data),
+                        )
                     await live.send_audio(audio_data)
 
             elif msg_type == "video_frame":
@@ -182,6 +209,14 @@ async def _client_receive_loop(
                 if live.camera_active:
                     frame_data = msg.get("data", "")
                     if frame_data:
+                        video_frames += 1
+                        if video_frames % 10 == 0:
+                            logger.info(
+                                "Live WS %s: received video frames=%s (latest b64_len=%s)",
+                                live.session_id,
+                                video_frames,
+                                len(frame_data),
+                            )
                         await live.send_video_frame(frame_data)
 
             elif msg_type == "camera_on":
@@ -197,9 +232,11 @@ async def _client_receive_loop(
                     })
                 else:
                     live.set_camera(True)
+                    logger.info("Live WS %s: camera enabled", live.session_id)
 
             elif msg_type == "camera_off":
                 live.set_camera(False)
+                logger.info("Live WS %s: camera disabled", live.session_id)
 
             elif msg_type == "text":
                 text = msg.get("message", "")
@@ -242,13 +279,18 @@ async def _client_receive_loop(
 
             elif msg_type == "ping":
                 # Keepalive ping from client — acknowledge but no action needed.
-                pass
+                try:
+                    await websocket.send_json({"type": "pong"})
+                except Exception:
+                    return
 
             else:
                 logger.debug("Unknown message type: %s", msg_type)
 
     except WebSocketDisconnect:
-        raise
+        # Normal when the user navigates away, loses connectivity, or mobile
+        # backgrounding closes the socket.
+        return
     except asyncio.CancelledError:
         raise
     except Exception:
