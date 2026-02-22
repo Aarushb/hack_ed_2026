@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 # Live API model (prefer env var; keep a conservative default).
 # If your deployment uses a different Live model, set GEMINI_LIVE_MODEL explicitly.
 MODEL = os.getenv("GEMINI_LIVE_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
+LIVE_TRANSCRIPTION_LANGUAGE = "en-US"
 
 # ---------------------------------------------------------------------------
 # System prompt for live sessions
@@ -194,6 +195,17 @@ class LiveSession:
             )
         return self._client
 
+    def _build_audio_transcription_config(self) -> types.AudioTranscriptionConfig:
+        """Build transcription config with English language preference.
+
+        Falls back to default config when the installed SDK version does not
+        expose language selection fields.
+        """
+        try:
+            return types.AudioTranscriptionConfig(language_code=LIVE_TRANSCRIPTION_LANGUAGE)
+        except TypeError:
+            return types.AudioTranscriptionConfig()
+
     async def connect(self) -> None:
         """Establish the Gemini Live API connection.
 
@@ -229,8 +241,8 @@ class LiveSession:
             ),
             tools=LIVE_TOOLS,
             realtime_input_config=realtime_input_config,
-            input_audio_transcription=types.AudioTranscriptionConfig(),
-            output_audio_transcription=types.AudioTranscriptionConfig(),
+            input_audio_transcription=self._build_audio_transcription_config(),
+            output_audio_transcription=self._build_audio_transcription_config(),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(

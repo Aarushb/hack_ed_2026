@@ -98,7 +98,8 @@ async def live_session_ws(websocket: WebSocket) -> None:
             "message": f"Failed to initialise AI session: {exc}",
             "code": "LIVE_SESSION_INIT_FAILED",
         })
-        await websocket.close(code=5003)
+        # Custom close codes must be in 4000-4999.
+        await websocket.close(code=4503)
         return
 
     # Run send and receive loops concurrently

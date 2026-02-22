@@ -19,6 +19,8 @@ let _reconnectTimer = null;
 let _reconnectAttempt = 0;
 let _lastLiveSessionId = null;
 let _keepaliveTimer = null;
+let _disconnectNoticeTimer = null;
+let _hadLiveConnection = false;
 
 // Premium UX: auto-start mic when assistant opens (or when WS connects)
 let _autoStartMicOnConnect = false;
@@ -61,6 +63,8 @@ const LIVE_VIDEO_FPS = 2;
 const LIVE_VIDEO_MAX_WIDTH = 360;
 const LIVE_WS_MAX_BUFFERED_BYTES = 768 * 1024; // throttle when WS buffer is large
 const LIVE_TRANSCRIPT_FALLBACK_DELAY_MS = 7000;
+const LIVE_KEEPALIVE_INTERVAL_MS = 15000;
+const LIVE_SPEECH_LANG = 'en-US';
 // Keep silence gate conservative so quiet speech isn't dropped.
 const LIVE_AUDIO_SILENCE_RMS_THRESHOLD = 0.00012;
 const LIVE_AUDIO_END_AFTER_SILENCE_MS = 1300;
@@ -558,6 +562,7 @@ function _startVoiceInput() {
       renderAssistantMessage('system', err.message);
       _stopVoiceInput();
     },
+    { lang: LIVE_SPEECH_LANG },
   );
 
   // Visual indicator that mic is active
@@ -667,6 +672,8 @@ function connectLiveSession(sessionId) {
   }
 
   _liveWs.onopen = () => {
+    _hadLiveConnection = true;
+    _clearDisconnectNoticeTimer();
     // Server will emit a `connection_status` message; avoid duplicate UI.
     _reconnectAttempt = 0;
     // If user had active streams before reconnect, resume them.
@@ -705,14 +712,17 @@ function connectLiveSession(sessionId) {
   _liveWs.onclose = (event) => {
     const wasClean = event.wasClean;
     _liveWs = null;
-    if (!wasClean) {
+    const shouldReconnect = _shouldReconnectLive(event);
+    if (!wasClean && shouldReconnect) {
+      _scheduleDisconnectNotice(event);
+      _scheduleReconnect();
+    } else if (!wasClean && !shouldReconnect) {
+      _clearDisconnectNoticeTimer();
       const code = event?.code;
-      const reason = event?.reason;
       renderAssistantMessage(
         'system',
-        `Live session disconnected${code ? ` (code ${code})` : ''}${reason ? `: ${reason}` : ''}. Reconnecting…`
+        `Live session ended${code ? ` (code ${code})` : ''}. Please reopen assistant to start a new live session.`
       );
-      _scheduleReconnect();
     }
   };
 }
@@ -764,9 +774,9 @@ function _handleLiveMessage(msg) {
       break;
     case 'connection_status':
       if (msg.status === 'connected') {
-        renderAssistantMessage('system', '🔴 Live session connected.');
+        // Suppress noisy connected banners on routine reconnects.
       } else if (msg.status === 'reconnecting') {
-        renderAssistantMessage('system', 'Reconnecting live session…');
+        _scheduleDisconnectNotice({});
       } else if (msg.status) {
         renderAssistantMessage('system', `Live session status: ${msg.status}`);
       }
@@ -815,6 +825,7 @@ function sendLiveLocation(lat, lng) {
  */
 function _disconnectLiveSession() {
   _clearReconnect();
+  _clearDisconnectNoticeTimer();
   _stopKeepalive();
   _resetAllLiveTranscriptDrafts();
   if (_liveWs) {
@@ -831,6 +842,35 @@ function _clearReconnect() {
   }
 }
 
+function _clearDisconnectNoticeTimer() {
+  if (_disconnectNoticeTimer) {
+    clearTimeout(_disconnectNoticeTimer);
+    _disconnectNoticeTimer = null;
+  }
+}
+
+function _shouldReconnectLive(event) {
+  const code = Number(event?.code || 0);
+  // Application-level close codes are terminal (invalid session, restricted, etc.)
+  if (code >= 4000 && code <= 4999) return false;
+  return true;
+}
+
+function _scheduleDisconnectNotice(event) {
+  _clearDisconnectNoticeTimer();
+
+  // Delay the warning so fast reconnects don't spam scary messages.
+  _disconnectNoticeTimer = setTimeout(() => {
+    if (_liveWs && _liveWs.readyState === WebSocket.OPEN) return;
+    const code = event?.code;
+    const reason = event?.reason;
+    renderAssistantMessage(
+      'system',
+      `Live session interrupted${code ? ` (code ${code})` : ''}${reason ? `: ${reason}` : ''}. Reconnecting…`
+    );
+  }, _hadLiveConnection ? 1200 : 0);
+}
+
 function _startKeepalive() {
   _stopKeepalive();
   // Send one immediate ping so we can confirm traffic is flowing.
@@ -841,7 +881,7 @@ function _startKeepalive() {
       // ignore
     }
   }
-  // Send a ping every 25s to keep the connection alive (Render times out at 30s idle).
+  // Send regular pings to survive stricter proxy idle timeouts.
   _keepaliveTimer = setInterval(() => {
     if (_liveWs && _liveWs.readyState === WebSocket.OPEN) {
       try {
@@ -850,7 +890,7 @@ function _startKeepalive() {
         // Ignore send failures — onclose will handle reconnect.
       }
     }
-  }, 25000);
+  }, LIVE_KEEPALIVE_INTERVAL_MS);
 }
 
 function _stopKeepalive() {
@@ -914,7 +954,7 @@ function _startLiveSpeechFallback() {
       renderAssistantMessage('system', `Voice fallback error: ${err.message}`);
       _stopLiveSpeechFallback();
     },
-    { continuous: true, lang: 'en-US' },
+    { continuous: true, lang: LIVE_SPEECH_LANG },
   );
 }
 
