@@ -32,7 +32,10 @@ from services.session_service import build_route_context
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+# Live API model (prefer env var; keep a conservative default).
+# If your deployment uses a different Live model, set GEMINI_LIVE_MODEL explicitly.
 MODEL = os.getenv("GEMINI_LIVE_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
+LIVE_TRANSCRIPTION_LANGUAGE = "en-US"
 
 # ---------------------------------------------------------------------------
 # System prompt for live sessions
@@ -60,9 +63,9 @@ LIVE_SYSTEM_PROMPT = (
     "7. When you can see via camera, describe what you see and give "
     "actionable guidance. 'I can see a construction barrier ahead — there's "
     "a path around it to your left.'\n"
-    "8. Start the conversation with a brief introduction: 'Hi, I'm NorthStar "
-    "your navigation assistant. I can see you're headed to [destination]. "
-    "Let's get you there.' Then get straight to guidance."
+    "8. WAIT for the user to speak first before responding. Do not start "
+    "talking until you hear them. When they do speak, give a brief greeting "
+    "like 'Hi, I'm NorthStar. How can I help?' and then assist them."
 )
 
 # ---------------------------------------------------------------------------
@@ -132,6 +135,25 @@ LIVE_TOOLS = [
                     required=[],
                 ),
             ),
+            types.FunctionDeclaration(
+                name="request_camera",
+                description=(
+                    "Request the user to turn on their camera live stream. "
+                    "Use this immediately when you need visual context to "
+                    "assist the user (e.g. 'I need to see the intersection'). "
+                    "Do not ask verbally first, just call this tool."
+                ),
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "reason": types.Schema(
+                            type=types.Type.STRING,
+                            description="Short reason why camera is needed",
+                        ),
+                    },
+                    required=["reason"],
+                ),
+            ),
         ]
     )
 ]
@@ -156,7 +178,8 @@ class LiveSession:
     def __init__(self, nav_session: Session) -> None:
         self.nav_session = nav_session
         self.session_id = nav_session.session_id
-        self.gemini_session: Any = None
+        self._session_cm: Any = None
+        self._session: Any = None
         self.camera_active = False
         self._client: Optional[genai.Client] = None
 
@@ -172,6 +195,21 @@ class LiveSession:
             )
         return self._client
 
+    def _build_audio_transcription_config(self) -> types.AudioTranscriptionConfig:
+        """Build transcription config with English language preference.
+
+        Falls back to default config when the installed SDK version does not
+        expose language selection fields.
+        """
+        try:
+            return types.AudioTranscriptionConfig(language_code=LIVE_TRANSCRIPTION_LANGUAGE)
+        except Exception:
+            logger.debug(
+                "AudioTranscriptionConfig(language_code=...) unsupported by current SDK; "
+                "falling back to default transcription config."
+            )
+            return types.AudioTranscriptionConfig()
+
     async def connect(self) -> None:
         """Establish the Gemini Live API connection.
 
@@ -181,12 +219,34 @@ class LiveSession:
         route_context = build_route_context(self.nav_session)
         system = f"{LIVE_SYSTEM_PROMPT}\n\nCURRENT ROUTE CONTEXT:\n{route_context}"
 
+        # Tune server-side activity detection to reduce clipped starts/ends
+        # and improve transcript stability for natural pauses.
+        realtime_input_config = None
+        try:
+            realtime_input_config = types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    disabled=False,
+                    start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
+                    end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
+                    prefix_padding_ms=220,
+                    silence_duration_ms=900,
+                )
+            )
+        except Exception:
+            # SDK/version mismatch: keep default server VAD behavior.
+            logger.debug("RealtimeInputConfig not supported by current google-genai SDK")
+
         config = types.LiveConnectConfig(
-            response_modalities=["AUDIO", "TEXT"],
+            # Live sessions support exactly one response modality per session.
+            # For voice-to-voice we use AUDIO and enable transcriptions.
+            response_modalities=["AUDIO"],
             system_instruction=types.Content(
                 parts=[types.Part.from_text(text=system)],
             ),
             tools=LIVE_TOOLS,
+            realtime_input_config=realtime_input_config,
+            input_audio_transcription=self._build_audio_transcription_config(),
+            output_audio_transcription=self._build_audio_transcription_config(),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -197,10 +257,11 @@ class LiveSession:
         )
 
         client = self._get_client()
-        self.gemini_session = client.aio.live.connect(
-            model=MODEL,
-            config=config,
-        )
+        logger.info("Connecting Gemini Live session %s with model=%s", self.session_id, MODEL)
+        self._session_cm = client.aio.live.connect(model=MODEL, config=config)
+
+        # Keep a single persistent session open for the lifetime of this proxy.
+        self._session = await self._session_cm.__aenter__()
 
         logger.info("Live session connected for %s", self.session_id)
 
@@ -210,18 +271,38 @@ class LiveSession:
         Args:
             audio_base64: Base64-encoded PCM audio data.
         """
-        if self.gemini_session is None:
+        if self._session is None:
+            logger.warning("Cannot send audio: session is None")
             return
 
-        audio_bytes = base64.b64decode(audio_base64)
-        async with self.gemini_session as session:
-            await session.send(
-                input=types.LiveClientRealtimeInput(
-                    media_chunks=[
-                        types.Blob(data=audio_bytes, mime_type="audio/pcm")
-                    ],
+        try:
+            audio_bytes = base64.b64decode(audio_base64)
+            await self._session.send_realtime_input(
+                audio=types.Blob(
+                    data=audio_bytes,
+                    mime_type="audio/pcm;rate=16000",
                 ),
             )
+        except Exception as e:
+            logger.exception("Error sending audio to Gemini: %s", e)
+
+    async def send_audio_stream_end(self) -> None:
+        """Signal end-of-audio for the current speech segment.
+
+        This helps the Live model finalize turn detection when the user
+        pauses speaking.
+        """
+        if self._session is None:
+            return
+
+        try:
+            await self._session.send_realtime_input(audio_stream_end=True)
+        except TypeError:
+            # Backward-compatible fallback for SDK variants that do not
+            # accept audio_stream_end.
+            logger.debug("Live SDK does not support audio_stream_end on this version")
+        except Exception as e:
+            logger.exception("Error sending audio_stream_end to Gemini: %s", e)
 
     async def send_video_frame(self, frame_base64: str) -> None:
         """Send a video frame (JPEG) to Gemini.
@@ -233,18 +314,16 @@ class LiveSession:
         Args:
             frame_base64: Base64-encoded JPEG frame.
         """
-        if self.gemini_session is None or not self.camera_active:
+        if self._session is None or not self.camera_active:
             return
 
         frame_bytes = base64.b64decode(frame_base64)
-        async with self.gemini_session as session:
-            await session.send(
-                input=types.LiveClientRealtimeInput(
-                    media_chunks=[
-                        types.Blob(data=frame_bytes, mime_type="image/jpeg")
-                    ],
-                ),
-            )
+        await self._session.send_realtime_input(
+            video=types.Blob(
+                data=frame_bytes,
+                mime_type="image/jpeg",
+            ),
+        )
 
     async def send_text(self, text: str) -> None:
         """Send a text message to the live session.
@@ -255,14 +334,13 @@ class LiveSession:
         Args:
             text: The text message to send.
         """
-        if self.gemini_session is None:
+        if self._session is None:
             return
-
-        async with self.gemini_session as session:
-            await session.send(
-                input=text,
-                end_of_turn=True,
-            )
+        try:
+            await self._session.send(input=text, end_of_turn=True)
+        except TypeError:
+            # Some SDK versions removed end_of_turn from send().
+            await self._session.send(input=text)
 
     async def receive_responses(self):
         """Async generator that yields responses from Gemini.
@@ -276,14 +354,34 @@ class LiveSession:
             Dicts with ``type`` and payload keys matching the WebSocket
             protocol defined in api-endpoints.md.
         """
-        if self.gemini_session is None:
+        if self._session is None:
+            logger.warning("Cannot receive responses: session is None")
             return
 
-        async with self.gemini_session as session:
+        session = self._session
+        try:
             async for response in session.receive():
-                # Handle server content (text + audio)
+                # Handle server content (audio + optional transcripts)
                 if response.server_content:
                     content = response.server_content
+
+                    input_tx = getattr(content, "input_transcription", None)
+                    if input_tx is not None and getattr(input_tx, "text", None):
+                        logger.debug("User transcript: %s", input_tx.text[:50] if input_tx.text else "")
+                        yield {
+                            "type": "transcript",
+                            "text": input_tx.text,
+                            "role": "user",
+                        }
+
+                    output_tx = getattr(content, "output_transcription", None)
+                    if output_tx is not None and getattr(output_tx, "text", None):
+                        logger.debug("Assistant transcript: %s", output_tx.text[:50] if output_tx.text else "")
+                        yield {
+                            "type": "transcript",
+                            "text": output_tx.text,
+                            "role": "assistant",
+                        }
 
                     if content.model_turn:
                         for part in content.model_turn.parts:
@@ -294,12 +392,15 @@ class LiveSession:
                                     "role": "assistant",
                                 }
                             if part.inline_data:
+                                mime = part.inline_data.mime_type or ""
+                                if mime.startswith("audio/pcm") and "rate=" not in mime:
+                                    mime = "audio/pcm;rate=24000"
                                 yield {
                                     "type": "audio",
                                     "data": base64.b64encode(
                                         part.inline_data.data
                                     ).decode(),
-                                    "mime_type": part.inline_data.mime_type,
+                                    "mime_type": mime,
                                 }
 
                     if content.turn_complete:
@@ -307,35 +408,53 @@ class LiveSession:
 
                 # Handle tool calls
                 if response.tool_call:
-                    for fn_call in response.tool_call.function_calls:
-                        yield {
-                            "type": "tool_call",
-                            "name": fn_call.name,
-                            "status": "executing",
-                        }
+                        for fn_call in response.tool_call.function_calls:
+                            yield {
+                                "type": "tool_call",
+                                "name": fn_call.name,
+                                "status": "executing",
+                            }
 
-                        result = await self._execute_tool(
-                            fn_call.name,
-                            fn_call.args or {},
-                        )
+                            # Intercept camera request to send control signal to client
+                            if fn_call.name == "request_camera":
+                                yield {
+                                    "type": "camera_request",
+                                    "reason": (fn_call.args or {}).get("reason", "Visual assistance needed")
+                                }
 
-                        # Send tool response back to Gemini
-                        await session.send(
-                            input=types.LiveClientToolResponse(
-                                function_responses=[
-                                    types.FunctionResponse(
-                                        name=fn_call.name,
-                                        response=result,
-                                    )
-                                ]
-                            ),
-                        )
+                            result = await self._execute_tool(
+                                fn_call.name,
+                                fn_call.args or {},
+                            )
 
-                        yield {
-                            "type": "tool_result",
-                            "name": fn_call.name,
-                            "status": "complete",
-                        }
+                            # Send tool response back to Gemini (must include matching id)
+                            fn_id = getattr(fn_call, "id", None)
+                            function_response = types.FunctionResponse(
+                                id=fn_id,
+                                name=fn_call.name,
+                                response=result,
+                            )
+
+                            try:
+                                await session.send_tool_response(
+                                    function_responses=[function_response]
+                                )
+                            except AttributeError:
+                                await session.send(
+                                    input=types.LiveClientToolResponse(
+                                        function_responses=[function_response]
+                                    ),
+                                )
+
+                            yield {
+                                "type": "tool_result",
+                                "name": fn_call.name,
+                                "status": "complete",
+                            }
+
+        except Exception as e:
+            logger.exception("Error in Gemini receive loop: %s", e)
+            raise
 
     async def _execute_tool(
         self,
@@ -371,13 +490,13 @@ class LiveSession:
                 )
 
             elif tool_name == "get_current_location":
-                return self._tool_get_current_location()
+                return await self._tool_get_current_location()
 
-            else:
-                logger.warning("Unknown tool called: %s", tool_name)
-                return {"error": f"Unknown tool: {tool_name}"}
+            elif tool_name == "request_camera":
+                self.camera_active = True
+                return {"status": "camera_requested", "message": "User has been prompted to enable camera"}
 
-        except Exception:
+        except Exception as e:
             logger.exception("Tool execution failed: %s", tool_name)
             return {"error": f"Tool {tool_name} failed"}
 
@@ -450,7 +569,7 @@ class LiveSession:
             return {"error": "Could not get directions"}
         return result
 
-    def _tool_get_current_location(self) -> dict:
+    async def _tool_get_current_location(self) -> dict:
         """Get the user's latest GPS position and navigation state."""
         from services.geo_service import calculate_bearing, calculate_distance
 
@@ -494,14 +613,15 @@ class LiveSession:
 
     async def close(self) -> None:
         """Close the Gemini Live session and clean up resources."""
-        if self.gemini_session is not None:
+        if self._session_cm is not None:
             try:
-                async with self.gemini_session as session:
-                    session.close()
+                await self._session_cm.__aexit__(None, None, None)
             except Exception:
                 pass  # Best-effort cleanup
-            self.gemini_session = None
-            logger.info("Live session closed for %s", self.session_id)
+
+        self._session = None
+        self._session_cm = None
+        logger.info("Live session closed for %s", self.session_id)
 
 
 # ---------------------------------------------------------------------------

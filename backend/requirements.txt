@@ -1,0 +1,30 @@
+# ── Core API framework ────────────────────────────────────────────────────────
+fastapi
+uvicorn[standard]
+python-multipart
+websockets                       # WebSocket support for Live API proxy
+
+# ── Data validation ───────────────────────────────────────────────────────────
+pydantic
+
+# ── HTTP client (async, for calling external APIs) ────────────────────────────
+httpx
+
+# ── Geo calculations (haversine distance, bearing) ────────────────────────────
+geopy
+
+# ── Environment variable management ──────────────────────────────────────────
+python-dotenv
+
+# ── Google Generative AI SDK ──────────────────────────────────────────────────
+# Covers both REST and Multimodal Live API.
+# Used for: NLP search (structured output), route narration, text assistant
+# (function calling + multimodal), voice-to-voice + live video (Live API).
+google-genai
+
+# ── Google Maps / Places (server-side) ────────────────────────────────────────
+# Single API key covers Places, Directions, and Static Maps.
+googlemaps
+
+# ── Image processing (optional, for camera image compression) ─────────────────
+Pillow

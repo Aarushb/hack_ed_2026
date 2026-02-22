@@ -10,6 +10,7 @@ sets up structured logging.  Run with:
 from __future__ import annotations
 
 import logging
+import os
 import sys
 
 from fastapi import FastAPI
@@ -43,6 +44,8 @@ app = FastAPI(
     ),
 )
 
+API_PREFIX = "/api"
+
 # ---------------------------------------------------------------------------
 # CORS (permissive for development — tighten in production)
 # ---------------------------------------------------------------------------
@@ -58,16 +61,16 @@ app.add_middleware(
 # Static files (audio cues)
 # ---------------------------------------------------------------------------
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount(f"{API_PREFIX}/static", StaticFiles(directory="static"), name="static")
 
 # ---------------------------------------------------------------------------
 # Routers
 # ---------------------------------------------------------------------------
 
-app.include_router(search.router, prefix="/search", tags=["search"])
-app.include_router(session.router, prefix="/session", tags=["session"])
-app.include_router(assistant.router, prefix="/assistant", tags=["assistant"])
-app.include_router(live.router, prefix="/live", tags=["live"])
+app.include_router(search.router, prefix=f"{API_PREFIX}/search", tags=["search"])
+app.include_router(session.router, prefix=f"{API_PREFIX}/session", tags=["session"])
+app.include_router(assistant.router, prefix=f"{API_PREFIX}/assistant", tags=["assistant"])
+app.include_router(live.router, prefix=f"{API_PREFIX}/live", tags=["live"])
 
 
 # ---------------------------------------------------------------------------
@@ -78,3 +81,18 @@ app.include_router(live.router, prefix="/live", tags=["live"])
 def root():
     """Health check endpoint."""
     return {"status": "ok", "version": "0.2.0"}
+
+
+@app.get(API_PREFIX)
+@app.get(f"{API_PREFIX}/")
+def api_root():
+    """API-prefixed health check endpoint."""
+    return {"status": "ok", "version": "0.2.0"}
+
+
+@app.get(f"{API_PREFIX}/config/public")
+def public_config():
+    """Expose non-sensitive runtime config needed by the frontend."""
+    return {
+        "google_maps_js_api_key": os.getenv("GOOGLE_MAPS_JS_API_KEY", ""),
+    }

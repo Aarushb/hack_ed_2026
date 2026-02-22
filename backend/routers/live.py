@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -83,19 +84,22 @@ async def live_session_ws(websocket: WebSocket) -> None:
     # Create the Gemini Live session
     live: live_service.LiveSession | None = None
     try:
+        logger.info("Creating Gemini Live session for %s", session_id)
         live = await live_service.create_live_session(nav_session)
+        logger.info("Gemini Live session created successfully for %s", session_id)
         await websocket.send_json({
             "type": "connection_status",
             "status": "connected",
         })
     except Exception as exc:
-        logger.exception("Failed to create live session for %s", session_id)
+        logger.exception("Failed to create live session for %s: %s", session_id, exc)
         await websocket.send_json({
             "type": "error",
             "message": f"Failed to initialise AI session: {exc}",
             "code": "LIVE_SESSION_INIT_FAILED",
         })
-        await websocket.close(code=5003)
+        # Custom close codes must be in 4000-4999.
+        await websocket.close(code=4503)
         return
 
     # Run send and receive loops concurrently
@@ -112,6 +116,18 @@ async def live_session_ws(websocket: WebSocket) -> None:
             [receive_task, send_task],
             return_when=asyncio.FIRST_COMPLETED,
         )
+
+        # Ensure exceptions from completed tasks are retrieved (prevents noisy
+        # "Task exception was never retrieved" logs on abnormal WS closes).
+        for task in done:
+            try:
+                await task
+            except WebSocketDisconnect:
+                pass
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.exception("Live session task failed for %s", session_id)
 
         # Cancel the other task
         for task in pending:
@@ -137,8 +153,6 @@ async def live_session_ws(websocket: WebSocket) -> None:
 
     finally:
         # Clean up the live session
-        if live is not None:
-            await live.close()
         await live_service.close_live_session(session_id)
         logger.info("Live session %s cleaned up", session_id)
 
@@ -157,6 +171,11 @@ async def _client_receive_loop(
         live: The active Gemini Live session.
         nav_session: The navigation session for moderation checks.
     """
+    audio_chunks = 0
+    video_frames = 0
+    pings = 0
+    last_log = time.monotonic()
+
     try:
         while True:
             raw = await websocket.receive_text()
@@ -175,13 +194,46 @@ async def _client_receive_loop(
             if msg_type == "audio":
                 audio_data = msg.get("data", "")
                 if audio_data:
+                    audio_chunks += 1
+                    if audio_chunks == 1:
+                        logger.info(
+                            "Live WS %s: received first audio chunk (b64_len=%s)",
+                            live.session_id,
+                            len(audio_data),
+                        )
+                    now = time.monotonic()
+                    if audio_chunks % 50 == 0 or (now - last_log) > 10:
+                        last_log = now
+                        logger.info(
+                            "Live WS %s: received audio chunks=%s (latest b64_len=%s)",
+                            live.session_id,
+                            audio_chunks,
+                            len(audio_data),
+                        )
                     await live.send_audio(audio_data)
+
+            elif msg_type == "audio_stream_end":
+                await live.send_audio_stream_end()
 
             elif msg_type == "video_frame":
                 # Only process if camera is active
                 if live.camera_active:
                     frame_data = msg.get("data", "")
                     if frame_data:
+                        video_frames += 1
+                        if video_frames == 1:
+                            logger.info(
+                                "Live WS %s: received first video frame (b64_len=%s)",
+                                live.session_id,
+                                len(frame_data),
+                            )
+                        if video_frames % 10 == 0:
+                            logger.info(
+                                "Live WS %s: received video frames=%s (latest b64_len=%s)",
+                                live.session_id,
+                                video_frames,
+                                len(frame_data),
+                            )
                         await live.send_video_frame(frame_data)
 
             elif msg_type == "camera_on":
@@ -197,9 +249,11 @@ async def _client_receive_loop(
                     })
                 else:
                     live.set_camera(True)
+                    logger.info("Live WS %s: camera enabled", live.session_id)
 
             elif msg_type == "camera_off":
                 live.set_camera(False)
+                logger.info("Live WS %s: camera disabled", live.session_id)
 
             elif msg_type == "text":
                 text = msg.get("message", "")
@@ -240,11 +294,23 @@ async def _client_receive_loop(
                     nav_session.last_user_lat = lat
                     nav_session.last_user_lng = lng
 
+            elif msg_type == "ping":
+                # Keepalive ping from client — acknowledge but no action needed.
+                pings += 1
+                if pings == 1 or pings % 5 == 0:
+                    logger.info("Live WS %s: received pings=%s", live.session_id, pings)
+                try:
+                    await websocket.send_json({"type": "pong"})
+                except Exception:
+                    return
+
             else:
                 logger.debug("Unknown message type: %s", msg_type)
 
     except WebSocketDisconnect:
-        raise
+        # Normal when the user navigates away, loses connectivity, or mobile
+        # backgrounding closes the socket.
+        return
     except asyncio.CancelledError:
         raise
     except Exception:

@@ -2,39 +2,84 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <meta name="description" content="Wayfind — Accessible audio navigation powered by AI" />
+  <meta name="theme-color" content="#0d1117" />
   <title>Wayfind</title>
   <link rel="stylesheet" href="styles/main.css" />
 </head>
 <body>
   <div id="app" role="main" aria-live="polite">
     <!-- Pages rendered here by JS -->
+    <div class="loading-overlay">
+      <div class="loading-spinner"></div>
+      <p>Loading Wayfind…</p>
+    </div>
   </div>
 
-  <!-- Utilities (load first) -->
+  <!-- Utilities (load first — other scripts depend on these) -->
+  <script src="utils/config.js"></script>
   <script src="utils/api.js"></script>
+  <script src="utils/session.js"></script>
   <script src="utils/geo.js"></script>
   <script src="utils/audio.js"></script>
   <script src="utils/speech.js"></script>
-  <script src="utils/session.js"></script>
 
-  <!-- Components -->
+  <!-- Components (depend on utils) -->
   <script src="components/map.js"></script>
-  <script src="components/assistant.js"></script>
-  <script src="components/clueCard.js"></script>
   <script src="components/searchCard.js"></script>
   <script src="components/waypointList.js"></script>
+  <script src="components/clueCard.js"></script>
+  <script src="components/assistant.js"></script>
 
-  <!-- Pages -->
+  <!-- Pages (depend on utils + components) -->
   <script src="pages/home.js"></script>
   <script src="pages/overview.js"></script>
   <script src="pages/game.js"></script>
   <script src="pages/complete.js"></script>
 
-  <!-- Entry point -->
+  <!-- Entry point (must load last — depends on everything above) -->
   <script src="app.js"></script>
 
-  <!-- Google Maps JS API - add your key here -->
-  <!-- <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_KEY&callback=initMap" async defer></script> -->
+  <!--
+    Google Maps JS API loader.
+    Reads key from window.__WAYFIND_CONFIG__.GOOGLE_MAPS_API_KEY.
+    Keep that key out of committed source by injecting it at runtime.
+  -->
+  <script>
+    (function loadGoogleMaps() {
+      function injectMapsScript(apiKey) {
+        if (!apiKey || document.querySelector('script[data-wayfind-maps="1"]')) return;
+        const script = document.createElement("script");
+        script.src = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(apiKey);
+        script.async = true;
+        script.defer = true;
+        script.dataset.wayfindMaps = "1";
+        document.body.appendChild(script);
+      }
+
+      const cfg = window.__WAYFIND_CONFIG__ || {};
+      const configuredKey = cfg.GOOGLE_MAPS_API_KEY;
+      if (configuredKey) {
+        injectMapsScript(configuredKey);
+        return;
+      }
+
+      const apiBase = cfg.API_BASE;
+      if (!apiBase) return;
+
+      fetch(`${apiBase}/config/public`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const keyFromBackend = data && data.google_maps_js_api_key;
+          if (keyFromBackend) {
+            injectMapsScript(keyFromBackend);
+          }
+        })
+        .catch(() => {
+          // Maps remains optional; app continues without visual map.
+        });
+    })();
+  </script>
 </body>
 </html>

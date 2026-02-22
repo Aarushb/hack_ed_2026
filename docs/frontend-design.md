@@ -433,7 +433,7 @@ The map is visual-only supplementary. All navigation works without it.
 All calls go through `utils/api.js`. Never call `fetch` directly in pages or components.
 
 ```javascript
-const API_BASE = 'http://localhost:8000';
+const API_BASE = 'http://localhost:8000/api';
 
 async function apiFetch(path, body = null) {
   const res = await fetch(`${API_BASE}${path}`, {

@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: wayfind-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3-flash-preview
+      - key: GEMINI_LIVE_MODEL
+        value: gemini-2.5-flash-native-audio-preview-12-2025
+
+  - type: web
+    name: wayfind-frontend
+    runtime: static
+    buildCommand: npm install && npm run build:static
+    staticPublishPath: dist
+    envVars:
+      - key: WAYFIND_API_BASE
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

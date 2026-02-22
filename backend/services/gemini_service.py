@@ -3,7 +3,7 @@
 Handles: destination search (structured output), route narration,
 text-based assistant with function calling, and map-image grounding.
 
-Model: ``gemini-2.0-flash`` via the ``google-generativeai`` SDK.
+Model: Gemini via the ``google-genai`` SDK.
 """
 
 from __future__ import annotations
@@ -50,6 +50,14 @@ def _get_client() -> genai.Client:
     return _client
 
 
+def _minimal_thinking_config() -> Optional[types.ThinkingConfig]:
+    """Best-effort minimal thinking for lower latency (Gemini 3+)."""
+    try:
+        return types.ThinkingConfig(thinking_level="minimal")
+    except Exception:
+        return None
+
+
 # ===================================================================
 # 1. Destination search — structured output
 # ===================================================================
@@ -85,13 +93,17 @@ async def search_destinations(
 
     try:
         client = _get_client()
+        thinking_config = _minimal_thinking_config()
+        cfg: dict = {
+            "response_mime_type": "application/json",
+            "response_schema": GeminiSearchResult,
+        }
+        if thinking_config is not None:
+            cfg["thinking_config"] = thinking_config
         response = client.models.generate_content(
             model=MODEL,
             contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=GeminiSearchResult,
-            ),
+            config=types.GenerateContentConfig(**cfg),
         )
 
         # Parse the structured response
@@ -147,9 +159,14 @@ async def generate_route_description(
 
     try:
         client = _get_client()
+        thinking_config = _minimal_thinking_config()
+        cfg: dict = {}
+        if thinking_config is not None:
+            cfg["thinking_config"] = thinking_config
         response = client.models.generate_content(
             model=MODEL,
             contents=prompt,
+            config=types.GenerateContentConfig(**cfg) if cfg else None,
         )
         return response.text.strip()
 
@@ -193,9 +210,14 @@ async def generate_narration(
 
     try:
         client = _get_client()
+        thinking_config = _minimal_thinking_config()
+        cfg: dict = {}
+        if thinking_config is not None:
+            cfg["thinking_config"] = thinking_config
         response = client.models.generate_content(
             model=MODEL,
             contents=prompt,
+            config=types.GenerateContentConfig(**cfg) if cfg else None,
         )
         return response.text.strip()
 
@@ -311,6 +333,13 @@ async def respond_to_assistant(
 
     try:
         client = _get_client()
+        thinking_config = _minimal_thinking_config()
+        cfg: dict = {
+            "system_instruction": system,
+            "tools": [_ASSISTANT_TOOLS],
+        }
+        if thinking_config is not None:
+            cfg["thinking_config"] = thinking_config
         response = client.models.generate_content(
             model=MODEL,
             contents=[
@@ -320,10 +349,7 @@ async def respond_to_assistant(
                     for p in parts
                 ]),
             ],
-            config=types.GenerateContentConfig(
-                system_instruction=system,
-                tools=[_ASSISTANT_TOOLS],
-            ),
+            config=types.GenerateContentConfig(**cfg),
         )
 
         # Check for function calls
@@ -406,6 +432,16 @@ async def _handle_map_image_tool(
             map_bytes = resp.content
 
         client = _get_client()
+        thinking_config = _minimal_thinking_config()
+        cfg: dict = {
+            "system_instruction": (
+                f"{system}\n\nA map image of the user's current GPS "
+                "position is attached. Use it to ground your spatial "
+                "reasoning about their location."
+            ),
+        }
+        if thinking_config is not None:
+            cfg["thinking_config"] = thinking_config
         response = client.models.generate_content(
             model=MODEL,
             contents=[
@@ -418,13 +454,7 @@ async def _handle_map_image_tool(
                     ),
                 ]),
             ],
-            config=types.GenerateContentConfig(
-                system_instruction=(
-                    f"{system}\n\nA map image of the user's current GPS "
-                    "position is attached. Use it to ground your spatial "
-                    "reasoning about their location."
-                ),
-            ),
+            config=types.GenerateContentConfig(**cfg),
         )
 
         return {

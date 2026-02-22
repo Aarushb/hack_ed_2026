@@ -89,7 +89,6 @@ async def generate_waypoints(
                 lat=end_loc["lat"],
                 lng=end_loc["lng"],
                 trigger_radius_meters=15.0,
-                audio_file="chime_ambient.mp3",
                 landmark_hint=instruction,
             )
             waypoints.append(wp)
