@@ -172,6 +172,7 @@ async def _client_receive_loop(
     """
     audio_chunks = 0
     video_frames = 0
+    pings = 0
     last_log = time.monotonic()
 
     try:
@@ -279,6 +280,9 @@ async def _client_receive_loop(
 
             elif msg_type == "ping":
                 # Keepalive ping from client — acknowledge but no action needed.
+                pings += 1
+                if pings % 5 == 0:
+                    logger.info("Live WS %s: received pings=%s", live.session_id, pings)
                 try:
                     await websocket.send_json({"type": "pong"})
                 except Exception:

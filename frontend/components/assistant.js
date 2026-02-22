@@ -28,6 +28,8 @@ let _micProcessor = null; // ScriptProcessorNode fallback
 let _micWorkletNode = null;
 let _micSilentGain = null;
 let _micActive = false;
+let _micStarting = false;
+let _micStartToken = 0;
 let _lastSilenceSentAt = 0;
 let _micInputSampleRate = LIVE_AUDIO_SAMPLE_RATE;
 let _sentAnyMicAudio = false;
@@ -42,6 +44,8 @@ let _camVideoEl = null;
 let _camCanvas = null;
 let _camTimer = null;
 let _cameraActive = false;
+let _cameraStarting = false;
+let _cameraStartToken = 0;
 let _sentAnyVideoFrame = false;
 
 const LIVE_AUDIO_SAMPLE_RATE = 16000;
@@ -306,7 +310,7 @@ async function _sendToAssistant(text, imageBase64) {
 
 function _handleCameraToggle() {
   if (state?.tier === 'premium') {
-    if (_cameraActive) {
+    if (_cameraActive || _cameraStarting) {
       _stopLiveCamera();
     } else {
       _startLiveCamera();
@@ -391,7 +395,7 @@ function captureFromCamera() {
 function _handleVoiceToggle() {
   // Premium: mic streaming to live WebSocket (true voice-to-voice).
   if (state?.tier === 'premium') {
-    _micActive ? _stopLiveMic() : _startLiveMic();
+    (_micActive || _micStarting) ? _stopLiveMic() : _startLiveMic();
     return;
   }
 
@@ -658,11 +662,15 @@ function _scheduleReconnect() {
 // ── Premium: microphone PCM streaming ─────────────────────────────────────
 
 async function _startLiveMic() {
-  if (_micActive) return;
+  if (_micActive || _micStarting) return;
   if (!_liveWs || _liveWs.readyState !== WebSocket.OPEN) {
     renderAssistantMessage('system', 'Live session not connected yet.');
     return;
   }
+
+  _micStarting = true;
+  const token = ++_micStartToken;
+  _updateMicButton(true);
 
   try {
     _micStream = await navigator.mediaDevices.getUserMedia({
@@ -674,7 +682,18 @@ async function _startLiveMic() {
       },
     });
   } catch (err) {
+    _micStarting = false;
+    _updateMicButton(false);
     renderAssistantMessage('system', 'Microphone permission denied or unavailable.');
+    return;
+  }
+
+  // If user toggled off while permission prompt was open.
+  if (token !== _micStartToken) {
+    try { _micStream?.getTracks().forEach((t) => t.stop()); } catch (_) {}
+    _micStream = null;
+    _micStarting = false;
+    _updateMicButton(false);
     return;
   }
 
@@ -694,6 +713,12 @@ async function _startLiveMic() {
   try {
     if (_micCtx.state === 'suspended') await _micCtx.resume();
   } catch (_) {}
+
+  if (token !== _micStartToken) {
+    _micStarting = false;
+    _stopLiveMic();
+    return;
+  }
 
   _micSource = _micCtx.createMediaStreamSource(_micStream);
 
@@ -748,6 +773,7 @@ async function _startLiveMic() {
       _micSilentGain.gain.value = 0;
       _micWorkletNode.connect(_micSilentGain);
       _micSilentGain.connect(_micCtx.destination);
+      _micStarting = false;
       return;
     } catch (err) {
       console.warn('[assistant] AudioWorklet failed, falling back:', err.message);
@@ -771,10 +797,17 @@ async function _startLiveMic() {
   // ScriptProcessor typically needs to be connected to run.
   // Output is forced silent above to avoid echo.
   _micProcessor.connect(_micCtx.destination);
+  _micStarting = false;
 }
 
 function _stopLiveMic() {
-  if (!_micActive) return;
+  // Cancel any in-flight start (permission prompt, module load, etc.)
+  _micStartToken += 1;
+  _micStarting = false;
+  if (!_micActive && !_micStream && !_micCtx) {
+    _updateMicButton(false);
+    return;
+  }
   _micActive = false;
   _updateMicButton(false);
   renderAssistantMessage('system', 'Microphone off.');
@@ -862,11 +895,14 @@ function _resampleFloat32(input, inRate, outRate) {
 // ── Premium: camera frame streaming ───────────────────────────────────────
 
 async function _startLiveCamera() {
-  if (_cameraActive) return;
+  if (_cameraActive || _cameraStarting) return;
   if (!_liveWs || _liveWs.readyState !== WebSocket.OPEN) {
     renderAssistantMessage('system', 'Live session not connected yet.');
     return;
   }
+
+  _cameraStarting = true;
+  const token = ++_cameraStartToken;
 
   try {
     _camStream = await navigator.mediaDevices.getUserMedia({
@@ -874,7 +910,15 @@ async function _startLiveCamera() {
       audio: false,
     });
   } catch (err) {
+    _cameraStarting = false;
     renderAssistantMessage('system', 'Camera permission denied or unavailable.');
+    return;
+  }
+
+  if (token !== _cameraStartToken) {
+    try { _camStream?.getTracks().forEach((t) => t.stop()); } catch (_) {}
+    _camStream = null;
+    _cameraStarting = false;
     return;
   }
 
@@ -885,9 +929,18 @@ async function _startLiveCamera() {
   try { _liveWs.send(JSON.stringify({ type: 'camera_on' })); } catch (_) {}
 
   _camVideoEl = document.createElement('video');
+  _camVideoEl.autoplay = true;
   _camVideoEl.playsInline = true;
   _camVideoEl.muted = true;
   _camVideoEl.srcObject = _camStream;
+
+  // Keep it in the DOM (some browsers won't update videoWidth/Height otherwise).
+  _camVideoEl.style.position = 'absolute';
+  _camVideoEl.style.width = '1px';
+  _camVideoEl.style.height = '1px';
+  _camVideoEl.style.opacity = '0';
+  _camVideoEl.style.pointerEvents = 'none';
+  try { _panelEl?.appendChild(_camVideoEl); } catch (_) {}
 
   _camCanvas = document.createElement('canvas');
 
@@ -897,14 +950,40 @@ async function _startLiveCamera() {
     // Some browsers require video to be in DOM; degrade gracefully.
   }
 
+  // Wait briefly for metadata so videoWidth/Height become available.
+  await new Promise((resolve) => {
+    if (!_camVideoEl) return resolve();
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      try { _camVideoEl.onloadedmetadata = null; } catch (_) {}
+      resolve();
+    };
+    try { _camVideoEl.onloadedmetadata = finish; } catch (_) {}
+    setTimeout(finish, 800);
+  });
+
+  if (token !== _cameraStartToken) {
+    _cameraStarting = false;
+    _stopLiveCamera();
+    return;
+  }
+
   const intervalMs = Math.floor(1000 / LIVE_VIDEO_FPS);
   _camTimer = setInterval(() => {
     _sendVideoFrame();
   }, intervalMs);
+
+  _cameraStarting = false;
 }
 
 function _stopLiveCamera() {
-  if (!_cameraActive) return;
+  _cameraStartToken += 1;
+  _cameraStarting = false;
+  if (!_cameraActive && !_camStream && !_camTimer) {
+    return;
+  }
   _cameraActive = false;
   renderAssistantMessage('system', 'Camera off.');
 
@@ -919,6 +998,7 @@ function _stopLiveCamera() {
     _camStream.getTracks().forEach((t) => t.stop());
     _camStream = null;
   }
+  try { _camVideoEl?.remove(); } catch (_) {}
   _camVideoEl = null;
   _camCanvas = null;
 }
