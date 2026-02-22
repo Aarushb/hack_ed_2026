@@ -63,6 +63,12 @@ const LIVE_WS_MAX_BUFFERED_BYTES = 768 * 1024; // throttle when WS buffer is lar
 const LIVE_TRANSCRIPT_FALLBACK_DELAY_MS = 7000;
 const LIVE_AUDIO_SILENCE_RMS_THRESHOLD = 0.0003;
 const LIVE_AUDIO_END_AFTER_SILENCE_MS = 900;
+const LIVE_TRANSCRIPT_COALESCE_MS = 1000;
+
+let _liveTranscriptDrafts = {
+  user: { text: '', el: null, timer: null },
+  assistant: { text: '', el: null, timer: null },
+};
 
 // ── Public API ────────────────────────────────────────────────────────────
 
@@ -195,6 +201,7 @@ function closeAssistant() {
   if (!_panelEl) return;
   _isOpen = false;
   _autoStartMicOnConnect = false;
+  _resetAllLiveTranscriptDrafts();
   _panelEl.classList.remove('open');
   _overlayEl.classList.remove('open');
   _stopVoiceInput();
@@ -220,6 +227,7 @@ function toggleAssistant() {
  */
 function unmountAssistant() {
   closeAssistant();
+  _resetAllLiveTranscriptDrafts();
   _stopVoiceInput();
   _stopLiveMic();
   _stopLiveCamera();
@@ -247,7 +255,95 @@ function renderAssistantMessage(role, text) {
   _messagesEl.appendChild(msg);
 
   // Auto-scroll to latest message
+  _scrollMessagesToBottom();
+  return msg;
+}
+
+function _scrollMessagesToBottom() {
+  if (!_messagesEl) return;
   _messagesEl.scrollTop = _messagesEl.scrollHeight;
+}
+
+function _clearLiveTranscriptTimer(role) {
+  const draft = _liveTranscriptDrafts[role];
+  if (!draft?.timer) return;
+  clearTimeout(draft.timer);
+  draft.timer = null;
+}
+
+function _finalizeLiveTranscript(role) {
+  const draft = _liveTranscriptDrafts[role];
+  if (!draft) return;
+  _clearLiveTranscriptTimer(role);
+  draft.text = '';
+  draft.el = null;
+}
+
+function _resetAllLiveTranscriptDrafts() {
+  _finalizeLiveTranscript('user');
+  _finalizeLiveTranscript('assistant');
+}
+
+function _mergeLiveTranscriptText(previous, incoming) {
+  const prev = String(previous || '').trim();
+  const next = String(incoming || '').trim();
+  if (!next) return prev;
+  if (!prev) return next;
+
+  const prevLower = prev.toLowerCase();
+  const nextLower = next.toLowerCase();
+
+  // If provider sends cumulative transcript chunks, keep the fuller one.
+  if (nextLower.startsWith(prevLower)) return next;
+  if (prevLower.startsWith(nextLower)) return prev;
+
+  // Remove overlap between previous suffix and incoming prefix.
+  let overlap = 0;
+  const maxOverlap = Math.min(prev.length, next.length);
+  for (let i = maxOverlap; i >= 1; i--) {
+    if (prevLower.slice(-i) === nextLower.slice(0, i)) {
+      overlap = i;
+      break;
+    }
+  }
+  if (overlap > 0) return prev + next.slice(overlap);
+
+  // Otherwise append with readable spacing.
+  const needSpace = /[A-Za-z0-9)]$/.test(prev) && /^[A-Za-z0-9(]/.test(next);
+  return needSpace ? `${prev} ${next}` : `${prev}${next}`;
+}
+
+function _coalesceLiveTranscript(role, text, options = {}) {
+  if (role !== 'user' && role !== 'assistant') {
+    renderAssistantMessage(role || 'assistant', text);
+    return;
+  }
+
+  const incoming = String(text || '').trim();
+  if (!incoming) return;
+
+  const otherRole = role === 'assistant' ? 'user' : 'assistant';
+  if (_liveTranscriptDrafts[otherRole]?.el) {
+    _finalizeLiveTranscript(otherRole);
+  }
+
+  const draft = _liveTranscriptDrafts[role];
+  draft.text = _mergeLiveTranscriptText(draft.text, incoming);
+  if (!draft.el) {
+    draft.el = renderAssistantMessage(role, draft.text) || null;
+  } else {
+    draft.el.textContent = draft.text;
+    _scrollMessagesToBottom();
+  }
+
+  const isFinal = !!options.final;
+  if (isFinal) {
+    _finalizeLiveTranscript(role);
+    return;
+  }
+
+  _clearLiveTranscriptTimer(role);
+  draft.timer = setTimeout(() => _finalizeLiveTranscript(role), LIVE_TRANSCRIPT_COALESCE_MS);
 }
 
 /**
@@ -620,7 +716,7 @@ function _handleLiveMessage(msg) {
         _clearLiveFallbackTimer();
         _stopLiveSpeechFallback();
       }
-      renderAssistantMessage(msg.role || 'assistant', msg.text);
+      _coalesceLiveTranscript(msg.role || 'assistant', msg.text, { final: false });
       break;
     case 'audio':
       _receivedLiveAudio = true;
@@ -664,7 +760,8 @@ function _handleLiveMessage(msg) {
       }
       break;
     case 'turn_complete':
-      // No UI needed; included for protocol completeness.
+      _finalizeLiveTranscript('user');
+      _finalizeLiveTranscript('assistant');
       break;
     default:
       // Unknown message type — ignore gracefully
@@ -707,6 +804,7 @@ function sendLiveLocation(lat, lng) {
 function _disconnectLiveSession() {
   _clearReconnect();
   _stopKeepalive();
+  _resetAllLiveTranscriptDrafts();
   if (_liveWs) {
     _liveWs.onclose = null; // prevent reconnect logic on intentional close
     _liveWs.close();
