@@ -68,9 +68,9 @@ function renderGame(container) {
 
   document.getElementById('repeat-narration').addEventListener('click', () => {
     if (state.lastNarration) {
-      speak(state.lastNarration);
+      _speakNavigation(state.lastNarration);
     } else {
-      speak('No narration available yet.');
+      _speakNavigation('No narration available yet.');
     }
   });
 
@@ -183,7 +183,7 @@ async function _onLocationUpdate(lat, lng, accuracy) {
     if (result.narration) {
       state.lastNarration = result.narration;
       _updateNarrationDisplay(result.narration);
-      speak(result.narration);
+      _speakNavigation(result.narration);
     }
 
     // Handle waypoint arrival trigger
@@ -228,7 +228,7 @@ async function _handleWaypointTrigger(result) {
   const clueContainer = document.getElementById('clue-card-container');
   if (clueContainer && triggeredWp) {
     showClueCard(clueContainer, triggeredWp);
-    speak(`You've arrived at ${triggeredWp.name}.`);
+    _speakNavigation(`You've arrived at ${triggeredWp.name}.`);
   }
 
   // Advance to next waypoint via backend
@@ -260,7 +260,7 @@ async function _handleWaypointTrigger(result) {
     if (nextData.narration) {
       state.lastNarration = nextData.narration;
       _updateNarrationDisplay(nextData.narration);
-      setTimeout(() => speak(nextData.narration), 2000);
+      setTimeout(() => _speakNavigation(nextData.narration), 2000);
     }
 
     saveSession(state);
@@ -300,6 +300,18 @@ function _showGameError(message) {
 function _clearGameError() {
   const el = document.getElementById('game-error');
   if (el) el.innerHTML = '';
+}
+
+function _shouldSuppressNavigationSpeech() {
+  if (state?.tier !== 'premium') return false;
+  if (typeof isAssistantVoicePriorityActive !== 'function') return false;
+  return !!isAssistantVoicePriorityActive();
+}
+
+function _speakNavigation(text) {
+  if (!text) return;
+  if (_shouldSuppressNavigationSpeech()) return;
+  speak(text);
 }
 
 function _exitNavigation() {

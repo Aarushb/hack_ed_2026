@@ -61,8 +61,9 @@ const LIVE_VIDEO_FPS = 2;
 const LIVE_VIDEO_MAX_WIDTH = 360;
 const LIVE_WS_MAX_BUFFERED_BYTES = 768 * 1024; // throttle when WS buffer is large
 const LIVE_TRANSCRIPT_FALLBACK_DELAY_MS = 7000;
-const LIVE_AUDIO_SILENCE_RMS_THRESHOLD = 0.0003;
-const LIVE_AUDIO_END_AFTER_SILENCE_MS = 900;
+// Keep silence gate conservative so quiet speech isn't dropped.
+const LIVE_AUDIO_SILENCE_RMS_THRESHOLD = 0.00012;
+const LIVE_AUDIO_END_AFTER_SILENCE_MS = 1300;
 const LIVE_TRANSCRIPT_COALESCE_MS = 1000;
 
 let _liveTranscriptDrafts = {
@@ -178,6 +179,9 @@ function openAssistant() {
 
   // Premium: auto-start live mic for pure voice-to-voice experience.
   if (state?.tier === 'premium') {
+    // Prevent overlap with navigation TTS while live assistant is active.
+    try { stopSpeaking(); } catch (_) {}
+
     // Ensure WS is connected when the user opens the assistant.
     if (state.sessionId && (!_liveWs || _liveWs.readyState === WebSocket.CLOSED)) {
       connectLiveSession(state.sessionId);
@@ -220,6 +224,14 @@ function closeAssistant() {
  */
 function toggleAssistant() {
   _isOpen ? closeAssistant() : openAssistant();
+}
+
+/**
+ * Whether assistant voice should take priority over navigation narration.
+ * Used by game page to avoid overlapping voices.
+ */
+function isAssistantVoicePriorityActive() {
+  return !!(_isOpen && state?.tier === 'premium');
 }
 
 /**
@@ -938,8 +950,11 @@ async function _startLiveMic() {
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
-        autoGainControl: true,
+        // Browser AGC can over-compress speech and hurt recognition quality.
+        autoGainControl: false,
         channelCount: 1,
+        sampleRate: LIVE_AUDIO_SAMPLE_RATE,
+        sampleSize: 16,
       },
     });
   } catch (err) {

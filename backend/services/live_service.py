@@ -203,6 +203,23 @@ class LiveSession:
         route_context = build_route_context(self.nav_session)
         system = f"{LIVE_SYSTEM_PROMPT}\n\nCURRENT ROUTE CONTEXT:\n{route_context}"
 
+        # Tune server-side activity detection to reduce clipped starts/ends
+        # and improve transcript stability for natural pauses.
+        realtime_input_config = None
+        try:
+            realtime_input_config = types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    disabled=False,
+                    start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
+                    end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
+                    prefix_padding_ms=220,
+                    silence_duration_ms=900,
+                )
+            )
+        except Exception:
+            # SDK/version mismatch: keep default server VAD behavior.
+            logger.debug("RealtimeInputConfig not supported by current google-genai SDK")
+
         config = types.LiveConnectConfig(
             # Live sessions support exactly one response modality per session.
             # For voice-to-voice we use AUDIO and enable transcriptions.
@@ -211,6 +228,7 @@ class LiveSession:
                 parts=[types.Part.from_text(text=system)],
             ),
             tools=LIVE_TOOLS,
+            realtime_input_config=realtime_input_config,
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
             speech_config=types.SpeechConfig(
