@@ -19,6 +19,8 @@ let _reconnectTimer = null;
 let _reconnectAttempt = 0;
 let _lastLiveSessionId = null;
 let _keepaliveTimer = null;
+let _disconnectNoticeTimer = null;
+let _hadLiveConnection = false;
 
 // Premium UX: auto-start mic when assistant opens (or when WS connects)
 let _autoStartMicOnConnect = false;
@@ -33,9 +35,13 @@ let _micSilentGain = null;
 let _micActive = false;
 let _micStarting = false;
 let _micStartToken = 0;
-let _lastSilenceSentAt = 0;
-let _micInputSampleRate = LIVE_AUDIO_SAMPLE_RATE;
+let _micInputSampleRate = 16000;
 let _sentAnyMicAudio = false;
+let _micLastVoiceAt = 0;
+let _sentAudioStreamEndForSilence = false;
+let _gotUserTranscriptInCurrentMicSession = false;
+let _liveFallbackRecognition = null;
+let _liveFallbackTimer = null;
 
 // Live audio playback (PCM)
 let _playbackTime = 0;
@@ -56,6 +62,18 @@ const LIVE_AUDIO_CHUNK_MS = 80; // target chunk size (worklet may produce smalle
 const LIVE_VIDEO_FPS = 2;
 const LIVE_VIDEO_MAX_WIDTH = 360;
 const LIVE_WS_MAX_BUFFERED_BYTES = 768 * 1024; // throttle when WS buffer is large
+const LIVE_TRANSCRIPT_FALLBACK_DELAY_MS = 7000;
+const LIVE_KEEPALIVE_INTERVAL_MS = 15000;
+const LIVE_SPEECH_LANG = 'en-US';
+// Keep silence gate conservative so quiet speech isn't dropped.
+const LIVE_AUDIO_SILENCE_RMS_THRESHOLD = 0.00012;
+const LIVE_AUDIO_END_AFTER_SILENCE_MS = 1300;
+const LIVE_TRANSCRIPT_COALESCE_MS = 1000;
+
+let _liveTranscriptDrafts = {
+  user: { text: '', el: null, timer: null },
+  assistant: { text: '', el: null, timer: null },
+};
 
 // ── Public API ────────────────────────────────────────────────────────────
 
@@ -165,6 +183,9 @@ function openAssistant() {
 
   // Premium: auto-start live mic for pure voice-to-voice experience.
   if (state?.tier === 'premium') {
+    // Prevent overlap with navigation TTS while live assistant is active.
+    try { stopSpeaking(); } catch (_) {}
+
     // Ensure WS is connected when the user opens the assistant.
     if (state.sessionId && (!_liveWs || _liveWs.readyState === WebSocket.CLOSED)) {
       connectLiveSession(state.sessionId);
@@ -188,6 +209,7 @@ function closeAssistant() {
   if (!_panelEl) return;
   _isOpen = false;
   _autoStartMicOnConnect = false;
+  _resetAllLiveTranscriptDrafts();
   _panelEl.classList.remove('open');
   _overlayEl.classList.remove('open');
   _stopVoiceInput();
@@ -209,10 +231,19 @@ function toggleAssistant() {
 }
 
 /**
+ * Whether assistant voice should take priority over navigation narration.
+ * Used by game page to avoid overlapping voices.
+ */
+function isAssistantVoicePriorityActive() {
+  return !!(_isOpen && state?.tier === 'premium');
+}
+
+/**
  * Remove the assistant from the DOM entirely. Call when leaving game page.
  */
 function unmountAssistant() {
   closeAssistant();
+  _resetAllLiveTranscriptDrafts();
   _stopVoiceInput();
   _stopLiveMic();
   _stopLiveCamera();
@@ -240,7 +271,95 @@ function renderAssistantMessage(role, text) {
   _messagesEl.appendChild(msg);
 
   // Auto-scroll to latest message
+  _scrollMessagesToBottom();
+  return msg;
+}
+
+function _scrollMessagesToBottom() {
+  if (!_messagesEl) return;
   _messagesEl.scrollTop = _messagesEl.scrollHeight;
+}
+
+function _clearLiveTranscriptTimer(role) {
+  const draft = _liveTranscriptDrafts[role];
+  if (!draft?.timer) return;
+  clearTimeout(draft.timer);
+  draft.timer = null;
+}
+
+function _finalizeLiveTranscript(role) {
+  const draft = _liveTranscriptDrafts[role];
+  if (!draft) return;
+  _clearLiveTranscriptTimer(role);
+  draft.text = '';
+  draft.el = null;
+}
+
+function _resetAllLiveTranscriptDrafts() {
+  _finalizeLiveTranscript('user');
+  _finalizeLiveTranscript('assistant');
+}
+
+function _mergeLiveTranscriptText(previous, incoming) {
+  const prev = String(previous || '').trim();
+  const next = String(incoming || '').trim();
+  if (!next) return prev;
+  if (!prev) return next;
+
+  const prevLower = prev.toLowerCase();
+  const nextLower = next.toLowerCase();
+
+  // If provider sends cumulative transcript chunks, keep the fuller one.
+  if (nextLower.startsWith(prevLower)) return next;
+  if (prevLower.startsWith(nextLower)) return prev;
+
+  // Remove overlap between previous suffix and incoming prefix.
+  let overlap = 0;
+  const maxOverlap = Math.min(prev.length, next.length);
+  for (let i = maxOverlap; i >= 1; i--) {
+    if (prevLower.slice(-i) === nextLower.slice(0, i)) {
+      overlap = i;
+      break;
+    }
+  }
+  if (overlap > 0) return prev + next.slice(overlap);
+
+  // Otherwise append with readable spacing.
+  const needSpace = /[A-Za-z0-9)]$/.test(prev) && /^[A-Za-z0-9(]/.test(next);
+  return needSpace ? `${prev} ${next}` : `${prev}${next}`;
+}
+
+function _coalesceLiveTranscript(role, text, options = {}) {
+  if (role !== 'user' && role !== 'assistant') {
+    renderAssistantMessage(role || 'assistant', text);
+    return;
+  }
+
+  const incoming = String(text || '').trim();
+  if (!incoming) return;
+
+  const otherRole = role === 'assistant' ? 'user' : 'assistant';
+  if (_liveTranscriptDrafts[otherRole]?.el) {
+    _finalizeLiveTranscript(otherRole);
+  }
+
+  const draft = _liveTranscriptDrafts[role];
+  draft.text = _mergeLiveTranscriptText(draft.text, incoming);
+  if (!draft.el) {
+    draft.el = renderAssistantMessage(role, draft.text) || null;
+  } else {
+    draft.el.textContent = draft.text;
+    _scrollMessagesToBottom();
+  }
+
+  const isFinal = !!options.final;
+  if (isFinal) {
+    _finalizeLiveTranscript(role);
+    return;
+  }
+
+  _clearLiveTranscriptTimer(role);
+  draft.timer = setTimeout(() => _finalizeLiveTranscript(role), LIVE_TRANSCRIPT_COALESCE_MS);
 }
 
 /**
@@ -443,6 +562,7 @@ function _startVoiceInput() {
       renderAssistantMessage('system', err.message);
       _stopVoiceInput();
     },
+    { lang: LIVE_SPEECH_LANG },
   );
 
   // Visual indicator that mic is active
@@ -552,6 +672,8 @@ function connectLiveSession(sessionId) {
   }
 
   _liveWs.onopen = () => {
+    _hadLiveConnection = true;
+    _clearDisconnectNoticeTimer();
     // Server will emit a `connection_status` message; avoid duplicate UI.
     _reconnectAttempt = 0;
     // If user had active streams before reconnect, resume them.
@@ -590,14 +712,17 @@ function connectLiveSession(sessionId) {
   _liveWs.onclose = (event) => {
     const wasClean = event.wasClean;
     _liveWs = null;
-    if (!wasClean) {
+    const shouldReconnect = _shouldReconnectLive(event);
+    if (!wasClean && shouldReconnect) {
+      _scheduleDisconnectNotice(event);
+      _scheduleReconnect();
+    } else if (!wasClean && !shouldReconnect) {
+      _clearDisconnectNoticeTimer();
       const code = event?.code;
-      const reason = event?.reason;
       renderAssistantMessage(
         'system',
-        `Live session disconnected${code ? ` (code ${code})` : ''}${reason ? `: ${reason}` : ''}. Reconnecting…`
+        `Live session ended${code ? ` (code ${code})` : ''}. Please reopen assistant to start a new live session.`
       );
-      _scheduleReconnect();
     }
   };
 }
@@ -608,10 +733,17 @@ function connectLiveSession(sessionId) {
 function _handleLiveMessage(msg) {
   switch (msg.type) {
     case 'transcript':
-      renderAssistantMessage(msg.role || 'assistant', msg.text);
+      if ((msg.role || 'assistant') === 'user') {
+        _gotUserTranscriptInCurrentMicSession = true;
+        _clearLiveFallbackTimer();
+        _stopLiveSpeechFallback();
+      }
+      _coalesceLiveTranscript(msg.role || 'assistant', msg.text, { final: false });
       break;
     case 'audio':
       _receivedLiveAudio = true;
+      _clearLiveFallbackTimer();
+      _stopLiveSpeechFallback();
       _playLivePcmAudio(msg.data, msg.mime_type);
       break;
     case 'tool_call':
@@ -642,15 +774,16 @@ function _handleLiveMessage(msg) {
       break;
     case 'connection_status':
       if (msg.status === 'connected') {
-        renderAssistantMessage('system', '🔴 Live session connected.');
+        // Suppress noisy connected banners on routine reconnects.
       } else if (msg.status === 'reconnecting') {
-        renderAssistantMessage('system', 'Reconnecting live session…');
+        _scheduleDisconnectNotice({});
       } else if (msg.status) {
         renderAssistantMessage('system', `Live session status: ${msg.status}`);
       }
       break;
     case 'turn_complete':
-      // No UI needed; included for protocol completeness.
+      _finalizeLiveTranscript('user');
+      _finalizeLiveTranscript('assistant');
       break;
     default:
       // Unknown message type — ignore gracefully
@@ -692,7 +825,9 @@ function sendLiveLocation(lat, lng) {
  */
 function _disconnectLiveSession() {
   _clearReconnect();
+  _clearDisconnectNoticeTimer();
   _stopKeepalive();
+  _resetAllLiveTranscriptDrafts();
   if (_liveWs) {
     _liveWs.onclose = null; // prevent reconnect logic on intentional close
     _liveWs.close();
@@ -707,6 +842,35 @@ function _clearReconnect() {
   }
 }
 
+function _clearDisconnectNoticeTimer() {
+  if (_disconnectNoticeTimer) {
+    clearTimeout(_disconnectNoticeTimer);
+    _disconnectNoticeTimer = null;
+  }
+}
+
+function _shouldReconnectLive(event) {
+  const code = Number(event?.code || 0);
+  // Application-level close codes are terminal (invalid session, restricted, etc.)
+  if (code >= 4000 && code <= 4999) return false;
+  return true;
+}
+
+function _scheduleDisconnectNotice(event) {
+  _clearDisconnectNoticeTimer();
+
+  // Delay the warning so fast reconnects don't spam scary messages.
+  _disconnectNoticeTimer = setTimeout(() => {
+    if (_liveWs && _liveWs.readyState === WebSocket.OPEN) return;
+    const code = event?.code;
+    const reason = event?.reason;
+    renderAssistantMessage(
+      'system',
+      `Live session interrupted${code ? ` (code ${code})` : ''}${reason ? `: ${reason}` : ''}. Reconnecting…`
+    );
+  }, _hadLiveConnection ? 1200 : 0);
+}
+
 function _startKeepalive() {
   _stopKeepalive();
   // Send one immediate ping so we can confirm traffic is flowing.
@@ -717,7 +881,7 @@ function _startKeepalive() {
       // ignore
     }
   }
-  // Send a ping every 25s to keep the connection alive (Render times out at 30s idle).
+  // Send regular pings to survive stricter proxy idle timeouts.
   _keepaliveTimer = setInterval(() => {
     if (_liveWs && _liveWs.readyState === WebSocket.OPEN) {
       try {
@@ -726,7 +890,7 @@ function _startKeepalive() {
         // Ignore send failures — onclose will handle reconnect.
       }
     }
-  }, 25000);
+  }, LIVE_KEEPALIVE_INTERVAL_MS);
 }
 
 function _stopKeepalive() {
@@ -753,6 +917,63 @@ function _scheduleReconnect() {
 
 // ── Premium: microphone PCM streaming ─────────────────────────────────────
 
+function _clearLiveFallbackTimer() {
+  if (_liveFallbackTimer) {
+    clearTimeout(_liveFallbackTimer);
+    _liveFallbackTimer = null;
+  }
+}
+
+function _scheduleLiveSpeechFallback() {
+  _clearLiveFallbackTimer();
+  _liveFallbackTimer = setTimeout(() => {
+    if (!_micActive) return;
+    if (_gotUserTranscriptInCurrentMicSession) return;
+    if (_liveFallbackRecognition) return;
+    if (!isVoiceInputSupported()) return;
+    _startLiveSpeechFallback();
+  }, LIVE_TRANSCRIPT_FALLBACK_DELAY_MS);
+}
+
+function _startLiveSpeechFallback() {
+  if (_liveFallbackRecognition || !isVoiceInputSupported()) return;
+
+  renderAssistantMessage(
+    'system',
+    'Live transcript fallback enabled. Your speech will be sent as text messages.'
+  );
+
+  _liveFallbackRecognition = startListening(
+    async (transcript) => {
+      const text = String(transcript || '').trim();
+      if (!text) return;
+      renderAssistantMessage('user', text);
+      await _sendToAssistant(text, null);
+    },
+    (err) => {
+      renderAssistantMessage('system', `Voice fallback error: ${err.message}`);
+      _stopLiveSpeechFallback();
+    },
+    { continuous: true, lang: LIVE_SPEECH_LANG },
+  );
+}
+
+function _stopLiveSpeechFallback() {
+  if (_liveFallbackRecognition) {
+    stopListening(_liveFallbackRecognition);
+    _liveFallbackRecognition = null;
+  }
+}
+
+function _sendLiveAudioStreamEnd() {
+  if (!_liveWs || _liveWs.readyState !== WebSocket.OPEN) return;
+  try {
+    _liveWs.send(JSON.stringify({ type: 'audio_stream_end' }));
+  } catch (_) {
+    // Ignore transient send failures.
+  }
+}
+
 async function _startLiveMic() {
   if (_micActive || _micStarting) return;
   if (!_liveWs || _liveWs.readyState !== WebSocket.OPEN) {
@@ -769,8 +990,11 @@ async function _startLiveMic() {
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
-        autoGainControl: true,
+        // Browser AGC can over-compress speech and hurt recognition quality.
+        autoGainControl: false,
         channelCount: 1,
+        sampleRate: LIVE_AUDIO_SAMPLE_RATE,
+        sampleSize: 16,
       },
     });
   } catch (err) {
@@ -791,6 +1015,11 @@ async function _startLiveMic() {
 
   _micActive = true;
   _sentAnyMicAudio = false;
+  _micLastVoiceAt = 0;
+  _sentAudioStreamEndForSilence = false;
+  _gotUserTranscriptInCurrentMicSession = false;
+  _stopLiveSpeechFallback();
+  _scheduleLiveSpeechFallback();
   _updateMicButton(true);
   renderAssistantMessage('system', '🎙️ Microphone on. Speak normally.');
 
@@ -896,6 +1125,12 @@ function _stopLiveMic() {
   // Cancel any in-flight start (permission prompt, module load, etc.)
   _micStartToken += 1;
   _micStarting = false;
+  _clearLiveFallbackTimer();
+  _stopLiveSpeechFallback();
+  _gotUserTranscriptInCurrentMicSession = false;
+  _sendLiveAudioStreamEnd();
+  _micLastVoiceAt = 0;
+  _sentAudioStreamEndForSilence = false;
   if (!_micActive && !_micStream && !_micCtx) {
     _updateMicButton(false);
     return;
@@ -941,11 +1176,20 @@ function _sendPcmFloats(float32) {
   }
   const rms = Math.sqrt(sumSq / Math.max(1, audio.length));
   const now = Date.now();
-  // Keep the gate conservative; some phone mics capture very low amplitude.
-  if (rms < 0.0003) {
-    if (now - _lastSilenceSentAt < 500) return;
-    _lastSilenceSentAt = now;
+  // Avoid streaming silence; finalize the current voice turn after pause.
+  if (rms < LIVE_AUDIO_SILENCE_RMS_THRESHOLD) {
+    if (
+      _micLastVoiceAt &&
+      !_sentAudioStreamEndForSilence &&
+      (now - _micLastVoiceAt) >= LIVE_AUDIO_END_AFTER_SILENCE_MS
+    ) {
+      _sendLiveAudioStreamEnd();
+      _sentAudioStreamEndForSilence = true;
+    }
+    return;
   }
+  _micLastVoiceAt = now;
+  _sentAudioStreamEndForSilence = false;
 
   const pcm16 = new Int16Array(audio.length);
   for (let i = 0; i < audio.length; i++) {

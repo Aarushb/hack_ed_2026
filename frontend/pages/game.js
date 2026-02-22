@@ -49,7 +49,7 @@ function renderGame(container) {
         🧭
       </button>
     </div>
-    <button class="btn btn-danger" id="end-nav" aria-label="End navigation" style="position:fixed; top:12px; right:12px; z-index:99; font-weight:bold; padding:8px 16px;">
+    <button class="btn btn-danger end-nav-btn" id="end-nav" aria-label="End navigation">
       End
     </button>
   `;
@@ -68,18 +68,20 @@ function renderGame(container) {
 
   document.getElementById('repeat-narration').addEventListener('click', () => {
     if (state.lastNarration) {
-      speak(state.lastNarration);
+      _speakNavigation(state.lastNarration);
     } else {
-      speak('No narration available yet.');
+      _speakNavigation('No narration available yet.');
     }
   });
 
-  document.getElementById('end-nav').addEventListener('click', () => {
-    _teardownGame();
-    clearSession();
-    resetState();
-    navigateTo((el) => renderHome(el, null));
-  });
+  const endBtn = document.getElementById('end-nav');
+  if (endBtn) {
+    endBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      _exitNavigation();
+    });
+  }
 
   // ── Initialise systems (must be called from user gesture context) ────
   _initGameSystems();
@@ -181,7 +183,7 @@ async function _onLocationUpdate(lat, lng, accuracy) {
     if (result.narration) {
       state.lastNarration = result.narration;
       _updateNarrationDisplay(result.narration);
-      speak(result.narration);
+      _speakNavigation(result.narration);
     }
 
     // Handle waypoint arrival trigger
@@ -226,7 +228,7 @@ async function _handleWaypointTrigger(result) {
   const clueContainer = document.getElementById('clue-card-container');
   if (clueContainer && triggeredWp) {
     showClueCard(clueContainer, triggeredWp);
-    speak(`You've arrived at ${triggeredWp.name}.`);
+    _speakNavigation(`You've arrived at ${triggeredWp.name}.`);
   }
 
   // Advance to next waypoint via backend
@@ -258,7 +260,7 @@ async function _handleWaypointTrigger(result) {
     if (nextData.narration) {
       state.lastNarration = nextData.narration;
       _updateNarrationDisplay(nextData.narration);
-      setTimeout(() => speak(nextData.narration), 2000);
+      setTimeout(() => _speakNavigation(nextData.narration), 2000);
     }
 
     saveSession(state);
@@ -300,6 +302,30 @@ function _clearGameError() {
   if (el) el.innerHTML = '';
 }
 
+function _shouldSuppressNavigationSpeech() {
+  if (state?.tier !== 'premium') return false;
+  if (typeof isAssistantVoicePriorityActive !== 'function') return false;
+  return !!isAssistantVoicePriorityActive();
+}
+
+function _speakNavigation(text) {
+  if (!text) return;
+  if (_shouldSuppressNavigationSpeech()) return;
+  speak(text);
+}
+
+function _exitNavigation() {
+  try {
+    _teardownGame();
+  } catch (err) {
+    console.error('[game] End action teardown failed:', err);
+  }
+
+  try { clearSession(); } catch (_) {}
+  try { resetState(); } catch (_) {}
+  navigateTo((el) => renderHome(el, null));
+}
+
 // ── Cleanup ───────────────────────────────────────────────────────────────
 
 /**
@@ -307,26 +333,50 @@ function _clearGameError() {
  */
 function _teardownGame() {
   // Stop GPS tracking
-  if (_geoWatchId != null) {
-    stopWatching(_geoWatchId);
-    _geoWatchId = null;
+  try {
+    if (_geoWatchId != null) {
+      stopWatching(_geoWatchId);
+      _geoWatchId = null;
+    }
+  } catch (err) {
+    console.warn('[game] Failed to stop geolocation watch:', err);
   }
 
   // Stop audio
-  stopAudio();
-  destroyAudio();
+  try {
+    stopAudio();
+    destroyAudio();
+  } catch (err) {
+    console.warn('[game] Failed to stop audio subsystem:', err);
+  }
 
   // Stop compass
-  stopCompass();
+  try {
+    stopCompass();
+  } catch (err) {
+    console.warn('[game] Failed to stop compass:', err);
+  }
 
   // Stop TTS
-  stopSpeaking();
+  try {
+    stopSpeaking();
+  } catch (err) {
+    console.warn('[game] Failed to stop speech synthesis:', err);
+  }
 
   // Unmount assistant (also disconnects live WebSocket)
-  unmountAssistant();
+  try {
+    unmountAssistant();
+  } catch (err) {
+    console.warn('[game] Failed to unmount assistant:', err);
+  }
 
   // Destroy map
-  destroyMap();
+  try {
+    destroyMap();
+  } catch (err) {
+    console.warn('[game] Failed to destroy map:', err);
+  }
 
   _isProcessingUpdate = false;
 }

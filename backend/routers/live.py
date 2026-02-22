@@ -98,7 +98,8 @@ async def live_session_ws(websocket: WebSocket) -> None:
             "message": f"Failed to initialise AI session: {exc}",
             "code": "LIVE_SESSION_INIT_FAILED",
         })
-        await websocket.close(code=5003)
+        # Custom close codes must be in 4000-4999.
+        await websocket.close(code=4503)
         return
 
     # Run send and receive loops concurrently
@@ -210,6 +211,9 @@ async def _client_receive_loop(
                             len(audio_data),
                         )
                     await live.send_audio(audio_data)
+
+            elif msg_type == "audio_stream_end":
+                await live.send_audio_stream_end()
 
             elif msg_type == "video_frame":
                 # Only process if camera is active

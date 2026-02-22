@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 # Live API model (prefer env var; keep a conservative default).
 # If your deployment uses a different Live model, set GEMINI_LIVE_MODEL explicitly.
 MODEL = os.getenv("GEMINI_LIVE_MODEL", "gemini-2.5-flash-native-audio-preview-12-2025")
+LIVE_TRANSCRIPTION_LANGUAGE = "en-US"
 
 # ---------------------------------------------------------------------------
 # System prompt for live sessions
@@ -194,6 +195,21 @@ class LiveSession:
             )
         return self._client
 
+    def _build_audio_transcription_config(self) -> types.AudioTranscriptionConfig:
+        """Build transcription config with English language preference.
+
+        Falls back to default config when the installed SDK version does not
+        expose language selection fields.
+        """
+        try:
+            return types.AudioTranscriptionConfig(language_code=LIVE_TRANSCRIPTION_LANGUAGE)
+        except Exception:
+            logger.debug(
+                "AudioTranscriptionConfig(language_code=...) unsupported by current SDK; "
+                "falling back to default transcription config."
+            )
+            return types.AudioTranscriptionConfig()
+
     async def connect(self) -> None:
         """Establish the Gemini Live API connection.
 
@@ -203,6 +219,23 @@ class LiveSession:
         route_context = build_route_context(self.nav_session)
         system = f"{LIVE_SYSTEM_PROMPT}\n\nCURRENT ROUTE CONTEXT:\n{route_context}"
 
+        # Tune server-side activity detection to reduce clipped starts/ends
+        # and improve transcript stability for natural pauses.
+        realtime_input_config = None
+        try:
+            realtime_input_config = types.RealtimeInputConfig(
+                automatic_activity_detection=types.AutomaticActivityDetection(
+                    disabled=False,
+                    start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_HIGH,
+                    end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
+                    prefix_padding_ms=220,
+                    silence_duration_ms=900,
+                )
+            )
+        except Exception:
+            # SDK/version mismatch: keep default server VAD behavior.
+            logger.debug("RealtimeInputConfig not supported by current google-genai SDK")
+
         config = types.LiveConnectConfig(
             # Live sessions support exactly one response modality per session.
             # For voice-to-voice we use AUDIO and enable transcriptions.
@@ -211,8 +244,9 @@ class LiveSession:
                 parts=[types.Part.from_text(text=system)],
             ),
             tools=LIVE_TOOLS,
-            input_audio_transcription=types.AudioTranscriptionConfig(),
-            output_audio_transcription=types.AudioTranscriptionConfig(),
+            realtime_input_config=realtime_input_config,
+            input_audio_transcription=self._build_audio_transcription_config(),
+            output_audio_transcription=self._build_audio_transcription_config(),
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -252,6 +286,24 @@ class LiveSession:
         except Exception as e:
             logger.exception("Error sending audio to Gemini: %s", e)
 
+    async def send_audio_stream_end(self) -> None:
+        """Signal end-of-audio for the current speech segment.
+
+        This helps the Live model finalize turn detection when the user
+        pauses speaking.
+        """
+        if self._session is None:
+            return
+
+        try:
+            await self._session.send_realtime_input(audio_stream_end=True)
+        except TypeError:
+            # Backward-compatible fallback for SDK variants that do not
+            # accept audio_stream_end.
+            logger.debug("Live SDK does not support audio_stream_end on this version")
+        except Exception as e:
+            logger.exception("Error sending audio_stream_end to Gemini: %s", e)
+
     async def send_video_frame(self, frame_base64: str) -> None:
         """Send a video frame (JPEG) to Gemini.
 
@@ -284,8 +336,11 @@ class LiveSession:
         """
         if self._session is None:
             return
-
-        await self._session.send(input=text, end_of_turn=True)
+        try:
+            await self._session.send(input=text, end_of_turn=True)
+        except TypeError:
+            # Some SDK versions removed end_of_turn from send().
+            await self._session.send(input=text)
 
     async def receive_responses(self):
         """Async generator that yields responses from Gemini.
