@@ -49,7 +49,7 @@ function renderGame(container) {
         🧭
       </button>
     </div>
-    <button class="btn btn-danger" id="end-nav" aria-label="End navigation" style="position:fixed; top:12px; right:12px; z-index:1102; font-weight:bold; padding:8px 16px;">
+    <button class="btn btn-danger end-nav-btn" id="end-nav" aria-label="End navigation">
       End
     </button>
   `;
