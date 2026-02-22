@@ -334,42 +334,42 @@ class LiveSession:
 
                 # Handle tool calls
                 if response.tool_call:
-                for fn_call in response.tool_call.function_calls:
-                    yield {
-                        "type": "tool_call",
-                        "name": fn_call.name,
-                        "status": "executing",
-                    }
+                        for fn_call in response.tool_call.function_calls:
+                            yield {
+                                "type": "tool_call",
+                                "name": fn_call.name,
+                                "status": "executing",
+                            }
 
-                    result = await self._execute_tool(
-                        fn_call.name,
-                        fn_call.args or {},
-                    )
+                            result = await self._execute_tool(
+                                fn_call.name,
+                                fn_call.args or {},
+                            )
 
-                    # Send tool response back to Gemini (must include matching id)
-                    fn_id = getattr(fn_call, "id", None)
-                    function_response = types.FunctionResponse(
-                        id=fn_id,
-                        name=fn_call.name,
-                        response=result,
-                    )
+                            # Send tool response back to Gemini (must include matching id)
+                            fn_id = getattr(fn_call, "id", None)
+                            function_response = types.FunctionResponse(
+                                id=fn_id,
+                                name=fn_call.name,
+                                response=result,
+                            )
 
-                    try:
-                        await session.send_tool_response(
-                            function_responses=[function_response]
-                        )
-                    except AttributeError:
-                        await session.send(
-                            input=types.LiveClientToolResponse(
-                                function_responses=[function_response]
-                            ),
-                        )
+                            try:
+                                await session.send_tool_response(
+                                    function_responses=[function_response]
+                                )
+                            except AttributeError:
+                                await session.send(
+                                    input=types.LiveClientToolResponse(
+                                        function_responses=[function_response]
+                                    ),
+                                )
 
-                    yield {
-                        "type": "tool_result",
-                        "name": fn_call.name,
-                        "status": "complete",
-                    }
+                            yield {
+                                "type": "tool_result",
+                                "name": fn_call.name,
+                                "status": "complete",
+                            }
 
         except Exception as e:
             logger.exception("Error in Gemini receive loop: %s", e)
