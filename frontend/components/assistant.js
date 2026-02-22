@@ -620,6 +620,16 @@ function _handleLiveMessage(msg) {
     case 'tool_result':
       renderAssistantMessage('system', `✅ ${msg.name} complete.`);
       break;
+    case 'camera_request':
+      renderAssistantMessage('system', `📸 Request: ${msg.reason}`);
+      if (state?.tier === 'premium') {
+        if (!_cameraActive) {
+            _startLiveCamera();
+        }
+      } else {
+        renderAssistantMessage('system', 'Upgrade to Premium for live camera features.');
+      }
+      break;
     case 'moderation_warning':
       renderAssistantMessage('system', `⚠️ ${msg.message}`);
       // If moderation disables camera, stop streaming immediately.

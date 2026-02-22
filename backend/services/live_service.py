@@ -134,6 +134,25 @@ LIVE_TOOLS = [
                     required=[],
                 ),
             ),
+            types.FunctionDeclaration(
+                name="request_camera",
+                description=(
+                    "Request the user to turn on their camera live stream. "
+                    "Use this immediately when you need visual context to "
+                    "assist the user (e.g. 'I need to see the intersection'). "
+                    "Do not ask verbally first, just call this tool."
+                ),
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "reason": types.Schema(
+                            type=types.Type.STRING,
+                            description="Short reason why camera is needed",
+                        ),
+                    },
+                    required=["reason"],
+                ),
+            ),
         ]
     )
 ]
@@ -341,6 +360,13 @@ class LiveSession:
                                 "status": "executing",
                             }
 
+                            # Intercept camera request to send control signal to client
+                            if fn_call.name == "request_camera":
+                                yield {
+                                    "type": "camera_request",
+                                    "reason": (fn_call.args or {}).get("reason", "Visual assistance needed")
+                                }
+
                             result = await self._execute_tool(
                                 fn_call.name,
                                 fn_call.args or {},
@@ -409,13 +435,13 @@ class LiveSession:
                 )
 
             elif tool_name == "get_current_location":
-                return self._tool_get_current_location()
+                return await self._tool_get_current_location()
 
-            else:
-                logger.warning("Unknown tool called: %s", tool_name)
-                return {"error": f"Unknown tool: {tool_name}"}
+            elif tool_name == "request_camera":
+                self.camera_active = True
+                return {"status": "camera_requested", "message": "User has been prompted to enable camera"}
 
-        except Exception:
+        except Exception as e:
             logger.exception("Tool execution failed: %s", tool_name)
             return {"error": f"Tool {tool_name} failed"}
 
@@ -488,7 +514,7 @@ class LiveSession:
             return {"error": "Could not get directions"}
         return result
 
-    def _tool_get_current_location(self) -> dict:
+    async def _tool_get_current_location(self) -> dict:
         """Get the user's latest GPS position and navigation state."""
         from services.geo_service import calculate_bearing, calculate_distance
 
