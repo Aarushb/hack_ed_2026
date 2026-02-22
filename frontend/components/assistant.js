@@ -34,8 +34,11 @@ let _micActive = false;
 let _micStarting = false;
 let _micStartToken = 0;
 let _lastSilenceSentAt = 0;
-let _micInputSampleRate = LIVE_AUDIO_SAMPLE_RATE;
+let _micInputSampleRate = 16000;
 let _sentAnyMicAudio = false;
+let _gotUserTranscriptInCurrentMicSession = false;
+let _liveFallbackRecognition = null;
+let _liveFallbackTimer = null;
 
 // Live audio playback (PCM)
 let _playbackTime = 0;
@@ -56,6 +59,7 @@ const LIVE_AUDIO_CHUNK_MS = 80; // target chunk size (worklet may produce smalle
 const LIVE_VIDEO_FPS = 2;
 const LIVE_VIDEO_MAX_WIDTH = 360;
 const LIVE_WS_MAX_BUFFERED_BYTES = 768 * 1024; // throttle when WS buffer is large
+const LIVE_TRANSCRIPT_FALLBACK_DELAY_MS = 7000;
 
 // ── Public API ────────────────────────────────────────────────────────────
 
@@ -608,10 +612,17 @@ function connectLiveSession(sessionId) {
 function _handleLiveMessage(msg) {
   switch (msg.type) {
     case 'transcript':
+      if ((msg.role || 'assistant') === 'user') {
+        _gotUserTranscriptInCurrentMicSession = true;
+        _clearLiveFallbackTimer();
+        _stopLiveSpeechFallback();
+      }
       renderAssistantMessage(msg.role || 'assistant', msg.text);
       break;
     case 'audio':
       _receivedLiveAudio = true;
+      _clearLiveFallbackTimer();
+      _stopLiveSpeechFallback();
       _playLivePcmAudio(msg.data, msg.mime_type);
       break;
     case 'tool_call':
@@ -753,6 +764,54 @@ function _scheduleReconnect() {
 
 // ── Premium: microphone PCM streaming ─────────────────────────────────────
 
+function _clearLiveFallbackTimer() {
+  if (_liveFallbackTimer) {
+    clearTimeout(_liveFallbackTimer);
+    _liveFallbackTimer = null;
+  }
+}
+
+function _scheduleLiveSpeechFallback() {
+  _clearLiveFallbackTimer();
+  _liveFallbackTimer = setTimeout(() => {
+    if (!_micActive) return;
+    if (_gotUserTranscriptInCurrentMicSession) return;
+    if (_liveFallbackRecognition) return;
+    if (!isVoiceInputSupported()) return;
+    _startLiveSpeechFallback();
+  }, LIVE_TRANSCRIPT_FALLBACK_DELAY_MS);
+}
+
+function _startLiveSpeechFallback() {
+  if (_liveFallbackRecognition || !isVoiceInputSupported()) return;
+
+  renderAssistantMessage(
+    'system',
+    'Live transcript fallback enabled. Your speech will be sent as text messages.'
+  );
+
+  _liveFallbackRecognition = startListening(
+    async (transcript) => {
+      const text = String(transcript || '').trim();
+      if (!text) return;
+      renderAssistantMessage('user', text);
+      await _sendToAssistant(text, null);
+    },
+    (err) => {
+      renderAssistantMessage('system', `Voice fallback error: ${err.message}`);
+      _stopLiveSpeechFallback();
+    },
+    { continuous: true, lang: 'en-US' },
+  );
+}
+
+function _stopLiveSpeechFallback() {
+  if (_liveFallbackRecognition) {
+    stopListening(_liveFallbackRecognition);
+    _liveFallbackRecognition = null;
+  }
+}
+
 async function _startLiveMic() {
   if (_micActive || _micStarting) return;
   if (!_liveWs || _liveWs.readyState !== WebSocket.OPEN) {
@@ -791,6 +850,9 @@ async function _startLiveMic() {
 
   _micActive = true;
   _sentAnyMicAudio = false;
+  _gotUserTranscriptInCurrentMicSession = false;
+  _stopLiveSpeechFallback();
+  _scheduleLiveSpeechFallback();
   _updateMicButton(true);
   renderAssistantMessage('system', '🎙️ Microphone on. Speak normally.');
 
@@ -896,6 +958,9 @@ function _stopLiveMic() {
   // Cancel any in-flight start (permission prompt, module load, etc.)
   _micStartToken += 1;
   _micStarting = false;
+  _clearLiveFallbackTimer();
+  _stopLiveSpeechFallback();
+  _gotUserTranscriptInCurrentMicSession = false;
   if (!_micActive && !_micStream && !_micCtx) {
     _updateMicButton(false);
     return;
