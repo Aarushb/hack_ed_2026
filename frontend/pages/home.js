@@ -36,7 +36,7 @@ function renderHome(container, savedSession) {
   const hero = document.createElement('div');
   hero.className = 'hero';
   hero.innerHTML = `
-    <div class="logo" aria-hidden="true">🧭</div>
+    <img class="logo" src="assets/logo.webp" alt="NorthStar logo" />
     <h1>NorthStar</h1>
     <p class="tagline">Accessible audio navigation</p>
   `;

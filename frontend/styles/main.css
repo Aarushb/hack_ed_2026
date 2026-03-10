@@ -761,8 +761,20 @@ label {
 }
 
 .hero .logo {
-  font-size: 48px;
-  margin-bottom: var(--space-sm);
+  width: 80px;
+  height: 80px;
+  object-fit: contain;
+  margin: 0 auto var(--space-sm);
+  display: block;
+  border-radius: 50%;
+}
+
+.fab-logo {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  pointer-events: none;
+  border-radius: 50%;
 }
 
 .hero h1 {
