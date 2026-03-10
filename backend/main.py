@@ -1,4 +1,4 @@
-"""Wayfind API — FastAPI entry point.
+"""NorthStar API — FastAPI entry point.
 
 Configures CORS, mounts static files, registers all routers, and
 sets up structured logging.  Run with:
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
-    title="Wayfind API",
+    title="NorthStar API",
     version="0.2.0",
     description=(
         "Accessible AI navigation backend — voice-to-voice guidance, "

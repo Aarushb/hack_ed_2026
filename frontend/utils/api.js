@@ -2,8 +2,8 @@
 // Every network call goes through apiFetch(). Pages and components never
 // call fetch() directly. This keeps error handling and retry logic in one place.
 
-const API_BASE = (window.__WAYFIND_CONFIG__ && window.__WAYFIND_CONFIG__.API_BASE)
-  ? window.__WAYFIND_CONFIG__.API_BASE
+const API_BASE = (window.__NORTHSTAR_CONFIG__ && window.__NORTHSTAR_CONFIG__.API_BASE)
+  ? window.__NORTHSTAR_CONFIG__.API_BASE
   : 'http://localhost:8000/api';
 
 // Timeout for standard REST requests (ms)

@@ -37,7 +37,7 @@ function renderHome(container, savedSession) {
   hero.className = 'hero';
   hero.innerHTML = `
     <div class="logo" aria-hidden="true">🧭</div>
-    <h1>Wayfind</h1>
+    <h1>NorthStar</h1>
     <p class="tagline">Accessible audio navigation</p>
   `;
   container.appendChild(hero);

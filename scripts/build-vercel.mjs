@@ -9,7 +9,7 @@ const repoRoot = path.resolve(__dirname, '..');
 const srcDir = path.join(repoRoot, 'frontend');
 const outDir = path.join(repoRoot, 'dist');
 
-const apiBase = (process.env.WAYFIND_API_BASE || '').trim();
+const apiBase = (process.env.NORTHSTAR_API_BASE || '').trim();
 
 async function copyDir(src, dest) {
   await fs.mkdir(dest, { recursive: true });
@@ -31,13 +31,13 @@ await fs.rm(outDir, { recursive: true, force: true });
 await copyDir(srcDir, outDir);
 
 // Overwrite runtime config in the deploy output.
-// If WAYFIND_API_BASE isn't provided, keep the local default.
+// If NORTHSTAR_API_BASE isn't provided, keep the local default.
 if (apiBase) {
   const configPath = path.join(outDir, 'utils', 'config.js');
   await fs.mkdir(path.dirname(configPath), { recursive: true });
-  const config = `window.__WAYFIND_CONFIG__ = window.__WAYFIND_CONFIG__ || {};\nwindow.__WAYFIND_CONFIG__.API_BASE = ${JSON.stringify(apiBase)};\n`;
+  const config = `window.__NORTHSTAR_CONFIG__ = window.__NORTHSTAR_CONFIG__ || {};\nwindow.__NORTHSTAR_CONFIG__.API_BASE = ${JSON.stringify(apiBase)};\n`;
   await fs.writeFile(configPath, config, 'utf8');
 }
 
 console.log('[build:vercel] Built static site to', outDir);
-if (apiBase) console.log('[build:vercel] WAYFIND_API_BASE =', apiBase);
+if (apiBase) console.log('[build:vercel] NORTHSTAR_API_BASE =', apiBase);

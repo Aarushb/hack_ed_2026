@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 Set-Location -Path (Split-Path -Parent $PSScriptRoot)
 
 if ($ApiBase -ne "") {
-  $env:WAYFIND_API_BASE = $ApiBase
+  $env:NORTHSTAR_API_BASE = $ApiBase
 }
 
 Write-Host "Building for Vercel..."

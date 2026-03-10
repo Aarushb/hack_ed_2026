@@ -1,4 +1,4 @@
-"""Pydantic request/response models for the Wayfind API.
+"""Pydantic request/response models for the NorthStar API.
 
 All data contracts between frontend and backend are defined here.
 Includes models for waypoints, sessions, search, assistant, live sessions,

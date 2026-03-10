@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
-  <meta name="description" content="Wayfind — Accessible audio navigation powered by AI" />
+  <meta name="description" content="NorthStar — Accessible audio navigation powered by AI" />
   <meta name="theme-color" content="#0d1117" />
-  <title>Wayfind</title>
+  <title>NorthStar</title>
   <link rel="stylesheet" href="styles/main.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
     <!-- Pages rendered here by JS -->
     <div class="loading-overlay">
       <div class="loading-spinner"></div>
-      <p>Loading Wayfind…</p>
+      <p>Loading NorthStar…</p>
     </div>
   </div>
 
@@ -43,22 +43,22 @@
 
   <!--
     Google Maps JS API loader.
-    Reads key from window.__WAYFIND_CONFIG__.GOOGLE_MAPS_API_KEY.
+    Reads key from window.__NORTHSTAR_CONFIG__.GOOGLE_MAPS_API_KEY.
     Keep that key out of committed source by injecting it at runtime.
   -->
   <script>
     (function loadGoogleMaps() {
       function injectMapsScript(apiKey) {
-        if (!apiKey || document.querySelector('script[data-wayfind-maps="1"]')) return;
+        if (!apiKey || document.querySelector('script[data-northstar-maps="1"]')) return;
         const script = document.createElement("script");
         script.src = "https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(apiKey);
         script.async = true;
         script.defer = true;
-        script.dataset.wayfindMaps = "1";
+        script.dataset.northstarMaps = "1";
         document.body.appendChild(script);
       }
 
-      const cfg = window.__WAYFIND_CONFIG__ || {};
+      const cfg = window.__NORTHSTAR_CONFIG__ || {};
       const configuredKey = cfg.GOOGLE_MAPS_API_KEY;
       if (configuredKey) {
         injectMapsScript(configuredKey);

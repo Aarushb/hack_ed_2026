@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: wayfind-backend
+    name: northstar-backend
     runtime: python
     plan: free
     rootDir: backend
@@ -18,12 +18,12 @@ services:
         value: gemini-2.5-flash-native-audio-preview-12-2025
 
   - type: web
-    name: wayfind-frontend
+    name: northstar-frontend
     runtime: static
     buildCommand: npm install && npm run build:static
     staticPublishPath: dist
     envVars:
-      - key: WAYFIND_API_BASE
+      - key: NORTHSTAR_API_BASE
         sync: false
     routes:
       - type: rewrite

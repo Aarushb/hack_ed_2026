@@ -30,8 +30,8 @@ Recommended hackathon setup:
    - `GOOGLE_MAPS_API_KEY` (required)
    - `GEMINI_MODEL` (optional)
 5. Deploy.
-6. Copy your backend URL, e.g. `https://wayfind-backend.onrender.com`
-   - Your API base becomes: `https://wayfind-backend.onrender.com/api`
+6. Copy your backend URL, e.g. `https://northstar-backend.onrender.com`
+   - Your API base becomes: `https://northstar-backend.onrender.com/api`
 
 ---
 
@@ -46,13 +46,13 @@ Vercel deploys the app as a static site and injects the backend URL at build tim
    - **Build Command**: `npm run build:vercel`
    - **Output Directory**: `dist`
 4. Environment Variables (Project → Settings → Environment Variables):
-   - `WAYFIND_API_BASE` = `https://YOUR_BACKEND_HOST/api`
+   - `NORTHSTAR_API_BASE` = `https://YOUR_BACKEND_HOST/api`
 5. Deploy.
 
 ### If your backend is also on Vercel
 You can still link Basic/Standard REST endpoints the same way:
-- Set `WAYFIND_API_BASE` in the **frontend** project to your **backend** project URL + `/api`
-   - Example: `https://wayfind-backend.vercel.app/api`
+- Set `NORTHSTAR_API_BASE` in the **frontend** project to your **backend** project URL + `/api`
+   - Example: `https://northstar-backend.vercel.app/api`
 
 Note: Premium Live (`/api/live/session` WebSocket) will likely fail on a Vercel-hosted backend due to the WebSocket limitation above.
 
@@ -63,7 +63,7 @@ Install Node.js + npm, then run:
 cd d:\PROGRAMMING\projects\hackathons\hacked26\hack_ed_2026
 npm install -g vercel
 npm install
-$env:WAYFIND_API_BASE="https://YOUR_BACKEND_HOST/api"
+$env:NORTHSTAR_API_BASE="https://YOUR_BACKEND_HOST/api"
 npm run deploy:vercel
 ```
 
@@ -85,6 +85,6 @@ cd d:\PROGRAMMING\projects\hackathons\hacked26\hack_ed_2026
 ---
 
 ## Troubleshooting
-- **CORS errors**: the backend is permissive by default (`allow_origins=["*"]`), so this usually means the frontend is still pointing at localhost. Re-check `WAYFIND_API_BASE` in Vercel.
+- **CORS errors**: the backend is permissive by default (`allow_origins=["*"]`), so this usually means the frontend is still pointing at localhost. Re-check `NORTHSTAR_API_BASE` in Vercel.
 - **Backend sleeps** (free tier): first request after idle may be slow.
 - **WebSocket fails on Vercel backend**: expected limitation — deploy backend to Render/Fly instead.
