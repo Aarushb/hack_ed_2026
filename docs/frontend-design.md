@@ -363,7 +363,7 @@ The backend compresses or rejects images that exceed Gemini's size limit and ret
 localStorage — no server or database needed.
 
 ```javascript
-const SESSION_KEY = 'wayfind_session';
+const SESSION_KEY = 'northstar_session';
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 function saveSession() {

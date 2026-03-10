@@ -1,4 +1,4 @@
-"""Shared utility functions for the Wayfind backend.
+"""Shared utility functions for the NorthStar backend.
 
 HTML stripping, image compression, ID generation, and other helpers
 used across multiple services.

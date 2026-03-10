@@ -2,7 +2,7 @@
 // Saves enough state to resume navigation if the browser tab is closed
 // or the page refreshes. Sessions expire after 24 hours.
 
-const SESSION_KEY = 'wayfind_session';
+const SESSION_KEY = 'northstar_session';
 const SESSION_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 /**

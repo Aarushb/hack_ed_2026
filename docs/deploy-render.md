@@ -6,7 +6,7 @@ This is the lowest-hassle setup for this repo:
 
 ## 0) Prereqs
 - Repo pushed to GitHub
-- You have these keys ready:
+-    You have these keys ready:
   - `GEMINI_API_KEY`
   - `GOOGLE_MAPS_API_KEY`
 
@@ -19,7 +19,7 @@ This is the lowest-hassle setup for this repo:
      - `GEMINI_API_KEY`
      - `GOOGLE_MAPS_API_KEY`
    - Frontend:
-     - `WAYFIND_API_BASE`
+     - `NORTHSTAR_API_BASE`
 
 If you see `unknown type "static_site"`, your Blueprint is using an older service type. This repo’s `render.yaml` uses the current format: static sites are `type: web` with `runtime: static`.
 
@@ -27,10 +27,10 @@ If you see `services[1].plan no such plan free for service type web`, that’s b
 
 ## 2) Set the link between frontend and backend
 Once the backend deploys, copy its public URL:
-- Example: `https://wayfind-backend.onrender.com`
+- Example: `https://northstar-backend.onrender.com`
 
 Set the frontend env var:
-- `WAYFIND_API_BASE` = `https://wayfind-backend.onrender.com/api`
+- `NORTHSTAR_API_BASE` = `https://northstar-backend.onrender.com/api`
 
 Redeploy the frontend (Render dashboard → Manual deploy) so it rebuilds with the new value.
 
@@ -38,7 +38,7 @@ Redeploy the frontend (Render dashboard → Manual deploy) so it rebuilds with t
 - Open the frontend URL and start a session.
 - In DevTools → Network, confirm requests go to your Render backend URL.
 - Premium Live WebSocket should connect to:
-  - `wss://wayfind-backend.onrender.com/api/live/session?session_id=...`
+  - `wss://northstar-backend.onrender.com/api/live/session?session_id=...`
 
 ## 4) Future updates
 Just push to your repo’s deployed branch. Render auto-deploys both services.
@@ -47,4 +47,4 @@ Just push to your repo’s deployed branch. Render auto-deploys both services.
 - Backend: `uvicorn main:app --reload --port 8000` from `backend/`
 - Frontend: `python -m http.server 5173` from `frontend/`
 
-The frontend defaults to `http://localhost:8000/api` on localhost.
+  The frontend defaults to `http://localhost:8000/api` on localhost.
